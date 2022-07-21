@@ -1,0 +1,2 @@
+"Full_path_to_python_interpreter_directory\python.exe" "Full_path_to_DomData_directory\main.py"
+pause

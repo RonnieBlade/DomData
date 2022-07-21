@@ -1,0 +1,20 @@
+[mysql]
+host=host
+user=user
+password=password
+database=database
+[ftp]
+# FTP storage to save pictures
+host=ftp_host
+user=ftp_user
+passwd=ftp_password
+[telegram]
+# Chatbot for production
+token=telegram_bot_token
+# Chatbot for debugging
+token_test=testing_telegram_bot_token
+[imagga]
+# You can add multiple Imagga users to improve stability. Leave proxy, port, prx_user and prx_password blank if not needed
+imagga_users=[{"key":"Imagga public key","secret":"Imagga secretkey ","proxy":"proxy ip(leave blank if not needed)","port":"proxy port","prx_user":"prx_user","prx_password":"prx_password"},{"key":"","secret":"","proxy":"","port":"","prx_user":"","prx_password":""},{"key":"","secret":"","proxy":"","port":"","prx_user":"","prx_password":""}]
+[developers]
+developers=first
