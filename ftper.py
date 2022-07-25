@@ -1,3 +1,4 @@
+import os
 from ftplib import FTP, error_perm
 import time
 from config_reader import read_config
@@ -8,6 +9,8 @@ logger = mylogger.get_logger(__name__)
 
 wait_time = 5
 
+ftp_config = read_config("config.ini", "ftp")
+temp_img_dir = read_config("config.ini", "files")['temp_img_dir']
 
 def connnect():
 
@@ -29,6 +32,7 @@ def connnect():
             try_n += 1
 
 
+# upload or delete
 def upload_img(picname, new_pic_name, delete_file=False):
 
     ftp = connnect()
@@ -39,14 +43,14 @@ def upload_img(picname, new_pic_name, delete_file=False):
     ok = False
     while not ok:
         try:
-            ftp.cwd('/public_html/DomData/img/')
+            ftp.cwd(ftp_config['path'])
             data = ftp.retrlines('LIST')
             ok = True
         except Exception as ex:
             logger.exception('ftp.retrlines failed', ex)
             time.sleep(5)
 
-    path = f"images/{picname}.jpg"
+    path = os.path.join(temp_img_dir, f"{picname}.jpg")
 
     if not delete_file:
         file = open(path, "rb")  # file to send

@@ -27,6 +27,7 @@ def get_everything(inf, doms):
     mydb_commands.close(db)
     return res
 
+
 def get_items_for_ibase(inf):
 
     query = f"SELECT {inf[0]} FROM {inf[1]} WHERE type = 'dom' or (type = 'item' and demo_role is null) order by date desc limit 5000"
@@ -37,6 +38,7 @@ def get_items_for_ibase(inf):
     res = mydb_commands.read_all(db, query, {})
     mydb_commands.close(db)
     return res
+
 
 def get_user_keys(id):
 
@@ -64,7 +66,7 @@ def get_dom_access_key(myid):
     return mykey
 
 
-def get_user_houses(keys):
+def get_user_houses_by_key(keys):
 
     if keys is None or len(keys) == 0:
         return []
@@ -128,8 +130,6 @@ def get_user(telegram_id):
         res = res[0]
 
     return res
-
-
 
 
 def get_imagga_usage_list():
@@ -201,6 +201,7 @@ def get_users(ids):
 
     return users_list
 
+
 def update_user_status(user_id, status, status_value):
     db = mydb_commands.connect()
 
@@ -223,7 +224,8 @@ def update_user_status(user_id, status, status_value):
 
     return True
 
-def update_use_date(user):
+
+async def update_use_date(user):
     db = mydb_commands.connect()
 
     query = """UPDATE users SET last_use_date = now() where telegram_id = %s"""
@@ -233,6 +235,7 @@ def update_use_date(user):
     mydb_commands.close(db)
 
     return f"Updating the time of the last usage - User {user.id}", True
+
 
 def save_user(user):
 
@@ -270,6 +273,7 @@ def check_is_ok(args):
 
     return f"Adding key {key} to database", True
 
+
 def delete_access_key(user, key):
 
     db = mydb_commands.connect()
@@ -281,6 +285,7 @@ def delete_access_key(user, key):
     mydb_commands.close(db)
 
     return f"User {user.id} and key {key} pair has been removed from database", True
+
 
 def add_access_key(user, key):
 
@@ -324,6 +329,7 @@ def add_imagga_use(api_key, response, user_id):
     mydb_commands.write(db, query, args)
     mydb_commands.close(db)
 
+
 def add_item(dom_id, location, name, type, user_id, item_class, item_emoji, has_img=False, tags=None, demo_role=None):
 
     if tags is None or len(tags) == 0:
@@ -347,7 +353,7 @@ def add_item(dom_id, location, name, type, user_id, item_class, item_emoji, has_
     return last_id, "Name {name} with type {type} has been added to house {dom_id}, address: {location}, added by user {user_id}, name id - {last_id}"
 
 
-def delete_item(item_id):
+async def delete_item(item_id):
 
     db = mydb_commands.connect()
 
@@ -380,7 +386,7 @@ def delete_dom_and_key(dom_id):
     return f"House id {dom_id} and its keys deleted", True
 
 
-def update_item(table, mykey, attribute, value, where):
+async def update_item(table, mykey, attribute, value, where):
 
     db = mydb_commands.connect()
 

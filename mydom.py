@@ -1,16 +1,19 @@
+import asyncio
 import json
-import threading
-
 import emoji
-from nsc import dec_to_base
-
+import randtext as rt
 import mylogger
-
 import db.mydb as mydb
-
 from datetime import datetime, timedelta
+from translater import t
 
 logger = mylogger.get_logger(__name__)
+
+# resolutions for standard and premium users
+item_pic_resolution = 400
+item_pic_resolution_premium = 720
+storage_pic_resolution = 600
+storage_pic_resolution_premium = 900
 
 
 class Item:
@@ -18,17 +21,19 @@ class Item:
         self.name = name
         self.id = my_id
         self.location = location
+
+        # immutable
         self.type = my_type
         self.date = date
+        self.user_id = user_id
+        self.demo_role = demo_role
+
         self.dom_id = dom_id
         self.item_class = item_class
         self.item_emoji = None
-        self.user_id = user_id
         self.file_id = file_id
         self.taken_by_user = taken_by_user
         self.last_taken_date = last_taken_date
-
-        self.demo_role = demo_role
 
         self.dom_missing_things = []
         self.dom_highlighted_things = []
@@ -36,11 +41,14 @@ class Item:
         self.comment = comment
         self.commented_by_user = commented_by_user
         self.comment_date = comment_date
+
+        # not implemented yet
         self.wish_status = wish_status
         self.wished_by_user = wished_by_user
         self.wish_date = wish_date
         self.purchased_by_user = purchased_by_user
         self.purchase_date = purchase_date
+
         self.highlighted_by = highlighted_by
         self.highlighted_date = highlighted_date
 
@@ -70,7 +78,6 @@ class Item:
             self.space = space
 
         # Check if can put an item here
-
     def can_i_put_it_here(self, item_in_hands):
 
         loc_type = self.type
@@ -90,13 +97,151 @@ class Item:
             return False
         return True
 
+    def count_items_inside(self, first=False):
+        emojies = []
+        count = 1
 
+        # Not considering houses, floors, rooms as items to count
+        if self.item_class in ['house', 'dom', 'level', 'room'] or first:
+            count = 0
+
+        if len(self.space) == 0:
+            if self.item_emoji is not None and self.item_emoji != "" and self.item_class not in {'house', 'dom',
+                                                                                                 'level',
+                                                                                                 'room', 'cupboard',
+                                                                                                 'storage', 'box'}:
+                emojies.append(self.item_emoji)
+            return [count, emojies]
+        else:
+            for it in self.space:
+                res = it.count_items_inside()
+                count = count + res[0]
+                emojies.extend(res[1])
+
+            if count < 0:
+                pass
+
+            return [count, emojies]
+
+    async def update_and_form_reply(self, user, atr, value, auto=False):
+
+        asyncio.create_task(mydb.update_item("dom", "id", atr, value, self.id))
+
+        reply = ""
+
+        if atr == "demo_role":
+            # no reply needed
+            return
+        if atr == "file_id":
+            self.file_id = value
+            # no reply needed
+            return
+        if atr == "tags":
+            # no reply needed
+            return
+        if atr == "tagged_by":
+            self.tagged_by = value
+            # no reply needed
+            return
+        if atr == "tags_date":
+            # no reply needed
+            return
+        if atr == "dom_id":
+            self.dom_id = value
+            # no reply needed
+            return
+        if atr == "location":
+            self.location = value
+            self.date = datetime.now()
+            asyncio.create_task(mydb.update_item("dom", "id", "last_move_date", self.date, self.id))
+            # no reply needed
+            return
+        if atr == "taken_by_user":
+            self.taken_by_user = value
+            self.last_taken_date = datetime.now()
+            asyncio.create_task(mydb.update_item("dom", "id", "last_taken_date", self.last_taken_date, self.id))
+            # no reply needed
+            return
+        if atr == "highlighted_by":
+            self.highlighted_by = value
+            self.highlighted_date = datetime.now()
+            asyncio.create_task(mydb.update_item("dom", "id", "highlighted_date", self.highlighted_date, self.id))
+            # no reply needed
+            return
+        if atr == "has_img":
+            self.has_img = value
+            if value:
+                reply = f"{t('pic_of', user)} *{self.name}* {t('is_uploaded', user)}"
+            else:
+                reply = f"{t('pic_of', user)} *{self.name}* {t('is_deleted', user)}"
+        elif atr == "name":
+            if self.type in {"house", "dom"}:
+                asyncio.create_task(mydb.update_item("doms", "id", atr, value, self.dom_id))
+            old_name = self.name
+            self.name = value
+            reply = f"*{old_name}* {t('renamed_to', user)} *{value}*"
+        elif atr == "comment":
+
+            self.comment = value
+            self.commented_by_user = user.id
+
+            if auto:
+                self.commented_by_user = 1
+
+            self.comment_date = datetime.now()
+            asyncio.create_task(mydb.update_item("dom", "id", "commented_by_user", self.commented_by_user, self.id))
+            asyncio.create_task(mydb.update_item("dom", "id", "comment_date", self.comment_date, self.id))
+
+            if not auto:
+                if value is None:
+                    reply = f"{t('item_comment_deleted', user)}"
+                else:
+                    reply = f"{t('the_object', user)} *{self.name}* {t('item_commented', user)}"
+            else:
+                return reply
+
+        elif atr == "item_class":
+
+            if self.item_class is not None:
+                old_class_str = self.item_class
+                if value == old_class_str:
+                    reply = f"{t('class_remains', user)} *{t(value, user).lower()}*"
+                else:
+                    reply = f"{t('class_changed', user)} {t('from', user)} *{t(old_class_str, user).lower()}* {t('to', user)} *{t(value, user).lower()}*"
+            else:
+                reply = f"{t('class_changed', user)} {t('to', user)} *{t(value, user).lower()}*"
+            self.item_class = value
+        elif atr == "item_emoji":
+            new_emoji = emoji.emojize(f":{value}:", use_aliases=True)
+            if value is None or value == "None":
+                new_emoji = None
+                reply = f"{t('emoji_removed', user)}"
+            else:
+                if self.item_emoji is not None:
+                    old_emoji_str = self.item_emoji
+                    reply = f"{t('emoji_changed', user)} {t('from', user)} {old_emoji_str} {t('to', user)} {new_emoji}"
+                else:
+                    reply = f"{t('emoji_changed', user)} {t('to', user)} {new_emoji}"
+            self.item_emoji = new_emoji
+
+        return reply
+
+    @staticmethod
+    def tags_prepare(tags, count):
+        if tags is None:
+            return None
+        new_tags = tags[:count]
+        new_tags_new_format = []
+        for t in new_tags:
+            tag = {"c": round(t.get("confidence"), 2), "tag": t.get("tag").get("en")}
+            new_tags_new_format.append(tag)
+        return new_tags_new_format
 
 
 class Step:
     def __init__(self, name, location=0):
-        self.name = name
-        self.location = location
+        self._name = name
+        self._location = location
         self.new_item_name = ""
         self.new_item_type = ""
         self.new_item_class = ""
@@ -105,6 +250,22 @@ class Step:
         self.new_item_tags = []
         self.temp_item_tags = []
         self.new_item_emoji_str = ""
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = value
+
+    @property
+    def location(self):
+        return self._location
+
+    @location.setter
+    def location(self, value):
+        self._location = value
 
 
 class UserAction:
@@ -149,17 +310,49 @@ class User:
 
         self.last_use_date = datetime.now()
 
-        self.update_use_date_in_db()
+        asyncio.run(self.update_use_date_in_db())
 
         self.activated = activated
 
-    def update_use_date_in_db(self):
-        ta = threading.Thread(target=lambda: mydb.update_use_date(self))
-        ta.start()
+    def get_and_add_unique_key(self):
+        key = rt.get_random_string(32)
+        db_reply = mydb.check_is_ok(key)
+        if db_reply[1]:
+            mydb.add_access_key(self, key)
+            return key
+
+    def get_appropriate_resolution(self):
+        if self.step.new_item_type == 'item':
+            resolution = item_pic_resolution
+            if self.premium:
+                resolution = item_pic_resolution_premium
+        else:
+            resolution = storage_pic_resolution
+            if self.premium:
+                resolution = storage_pic_resolution_premium
+
+        return resolution
+
+    def clear_new_item_info(self):
+        self.step.new_item_name = ""
+        self.step.new_item_type = ""
+        self.step.new_item_class = ""
+        self.step.new_item_with_photo = False
+        self.step.new_item_tags = []
+        self.step.temp_item_tags = []
+        self.step.new_item_emoji_str = ""
+
+    def get_user_houses(self):
+        keys = mydb.get_user_keys(self.id)
+        houses = mydb.get_user_houses_by_key(keys)
+        return houses
+
+    async def update_use_date_in_db(self):
+        asyncio.create_task(mydb.update_use_date(self))
 
     def update_use_date(self):
         if self.last_use_date < datetime.now() - timedelta(hours=1):
-            self.update_use_date_in_db()
+            asyncio.run(self.update_use_date_in_db())
             self.last_use_date = datetime.now()
 
     def check_limit(self, atype, delta, limit, complete=False):
@@ -233,12 +426,14 @@ class User:
         self.action_logs.append(UserAction(atype, content, status))
         return True
 
+    # To avoid showing enormous crazy numbers in items IDs
+    # let's create individual IDs especially for the user
+    user_item_last_id = 1
+
     def update_dic(self, item_id):
         if item_id not in self.items_dic.keys():
-            v = 1
-            while v in self.items_dic.values():
-                v = v + 1
-            self.items_dic.update({item_id: v})
+            self.items_dic.update({item_id: self.user_item_last_id})
+            self.user_item_last_id += 1
 
     @staticmethod
     def format_id(v):
@@ -308,3 +503,136 @@ class AllItemsList:
 
     def remove_by_id(self, i):
         self.values = list(filter(lambda item: item.id != i, self.values))
+
+
+def find_item_by_id(input_id, my_things, user, convert=False):
+    for thing in my_things:
+        if convert:
+            id = user.id_conv(input_id, False)
+        else:
+            id = input_id
+        if id == thing.id:
+            return thing
+        if len(thing.space) != 0:
+            item = find_item_by_id(input_id, thing.space, user, convert)
+            if item is not None:
+                return item
+    return None
+
+
+def find_item_path(user, item, items, include_self_name=False, include_emoji=False, include_class=True,
+                   first_turn=False):
+    item_class_str = ""
+    item_self_name_str = ""
+    item_emoji_str = ""
+
+    if include_self_name:
+        if item.item_class is not None and item.item_class is not None and include_class:
+            item_class_str = f" ({t(item.item_class, user).lower()})"
+
+        if include_emoji:
+            if item.item_emoji is not None:
+                item_emoji_str = item.item_emoji + " "
+
+        item_self_name_str = f"\n{item_emoji_str}*{item.name}*{item_class_str}"
+
+    if item.location not in {-1, 0}:
+        parent = find_item_by_id(item.location, items, user)
+        user.update_dic(parent.id)
+        up_path = find_item_path(user, parent, items, False, include_emoji, include_class)
+
+        if parent is None:
+            return "/DomData"
+
+        parent_class_str = ""
+        if parent.item_class is not None and include_class:
+            parent_class_str = f" ({t(parent.item_class, user).lower()})"
+
+        parent_emoji_str = ""
+        if include_emoji:
+            if parent.item_emoji is not None:
+                parent_emoji_str = parent.item_emoji + " "
+
+        first_turn_str = ""
+        if first_turn:
+            first_turn_str = "\n      /up ⬆️"
+
+        full_path = f"{up_path}\n/{user.id_conv(parent.id)} {parent_emoji_str}_{parent.name}{parent_class_str}_{first_turn_str}{item_self_name_str}"
+
+        if full_path.count('\n') > 1 and t('path', user) not in full_path:
+            p = full_path.find('\n') + 1
+            full_path = full_path[:p] + f"{t('path', user)}:\n" + full_path[p:]
+
+        return full_path
+    else:
+
+        first_turn_str = ""
+        if first_turn and item.location == 0:
+            first_turn_str = "\n      /up ⬆️"
+
+        return f"/DomData{first_turn_str}{item_self_name_str}"
+
+
+def format_path(path):
+    if path == '/DomData':
+        return path
+
+    content = path.split(':\n')
+
+    lines = content[len(content) - 1].split('\n')
+    nlines = len(lines)
+    max_tabs = 5
+
+    levels = nlines - 1
+
+    tab_c = 1
+    this_iter = 0
+
+    new_path = ''
+
+    for l in lines:
+        this_tab = ' ' * tab_c
+
+        l = this_tab + l
+
+        max_length = 48
+        if len(l) > max_length:
+            l = f"{l[:max_length - 3]}..._"
+
+        this_iter += 1
+
+        if this_iter >= 1 and tab_c < max_tabs:
+            this_iter = this_iter - 1
+            tab_c += 1
+
+        new_path += l + '\n'
+
+    if len(content) > 1:
+        new_path = content[0] + ':\n' + new_path
+    return new_path[0:-2]
+
+
+def get_dir(id, items, user, by_user=False):
+    item = find_item_by_id(id, items, user, by_user)
+
+    if id == 0:
+        top = True
+        filtered_items = list(items)
+        filtered_items = list(filter(lambda item: item.dom_id in user.houses, filtered_items))
+        for fi in filtered_items:
+            user.update_dic(fi.id)
+        item = Item(0, f"{t('my_doms', user)}", -1, "top", datetime.now(), 0, None, None, 0, None, None, None,
+                    filtered_items)
+        return item
+
+    top = False
+    if item is None:
+        return None
+        # return None instead of the top level if not found, so that we first display a message "Not found"
+        # And only then - go to the top level (when we don't find the object)
+
+    else:
+        if item.dom_id not in user.houses:
+            return None
+
+    return item

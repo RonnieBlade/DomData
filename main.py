@@ -1,19 +1,29 @@
+import asyncio
+import json
+
+from telebot.apihelper import ApiException
+
+import mylogger
+import db.mydb as mydb
 import copy
 import os
 import random
-import re
-import telebot
-import ftper
-import myfiles
-import time
-from telebot import types
-from mydom import *
-from translater import *
-import randtext as rt
-from mysearch import compare
-import imagga_API
 import collections
 import datetime
+import time
+import re
+import emoji
+import telebot
+from telebot import types
+
+from mydom import Item, Step, User, AllItemsList, find_item_by_id, find_item_path, format_path, get_dir
+from translater import t
+import ftper
+import myfiles
+import imagga_API
+from mysearch import search_item_by_class_or_emoji, search_item_by_photo, search_item_by_part_of_name, sort_results_by_words_and_full_distance
+
+from static_data import item_types_dic, item_classes_dic, random_stickers, random_belarus_stickers
 
 import threading
 from config_reader import read_config
@@ -174,10 +184,6 @@ def go_to_rename_item(user, msg):
         previous_step(user, msg)
         return
 
-    item_emoji = ""
-    if item.item_emoji is not None:
-        item_emoji = item.item_emoji + " "
-
     user.step.name = "rename_item"
     if item.name is not None and item.name != "":
         send_msg_txt(user.id, f"{item.name}")
@@ -304,9 +310,8 @@ def go_to_put_back(user, msg):
     if location is None or user.step.location == 0 or location.taken_by_user is None:
         send_msg_txt(user.id, t("already_here", user))
     else:
-        location.taken_by_user = None
         remove_missing_thing(location, user, dom)
-        update_item_attribute(user, msg, "taken_by_user", None)
+        asyncio.run(update_item_attribute(user, msg, "taken_by_user", None))
 
     previous_step(user, msg)
 
@@ -317,9 +322,8 @@ def go_to_unhighlight(user, msg):
     if location is None or user.step.location == 0 or location.highlighted_by is None:
         send_msg_txt(user.id, t("already_here", user))
     else:
-        location.highlighted_by = None
         remove_highlighted_thing(location, user, dom)
-        update_item_attribute(user, msg, "highlighted_by", None)
+        asyncio.run(update_item_attribute(user, msg, "highlighted_by", None))
 
     previous_step(user, msg)
 
@@ -358,7 +362,6 @@ def put_it_here(user, msg):
         previous_step(user, msg)
         return
 
-    #good_place_to_land = can_i_put_it_here(location.type, user.item_in_hands.type)
     good_place_to_land = location.can_i_put_it_here(user.item_in_hands)
 
     if not good_place_to_land:
@@ -371,8 +374,6 @@ def put_it_here(user, msg):
     if user.item_in_hands.taken_by_user is not None:
         remove_missing_thing(user.item_in_hands, user, dom)
 
-    user.item_in_hands.location = location.id
-    user.item_in_hands.dom_id = location.dom_id
     location.space.append(user.item_in_hands)
 
     if user.item_in_hands.highlighted_by is not None:
@@ -380,8 +381,8 @@ def put_it_here(user, msg):
     if user.item_in_hands.taken_by_user is not None:
         add_missing_thing(user.item_in_hands, user, dom)
 
-    update_item_attribute(user, msg, "location", location.id)
-    update_item_attribute(user, msg, "dom_id", location.dom_id)
+    asyncio.run(update_item_attribute(user, msg, "location", location.id))
+    asyncio.run(update_item_attribute(user, msg, "dom_id", location.dom_id))
 
     user.item_in_hands = None
     user.item_in_hands_put_but_text = None
@@ -433,8 +434,7 @@ def go_to_highlight(user, msg):
         previous_step(user, msg)
         return
 
-    location.highlighted_by = user.id
-    update_item_attribute(user, msg, "highlighted_by", user.id)
+    asyncio.run(update_item_attribute(user, msg, "highlighted_by", user.id))
     add_highlighted_thing(location, user, dom)
     previous_step(user, msg)
 
@@ -459,8 +459,7 @@ def go_to_take_to_use(user, msg):
         previous_step(user, msg)
         return
 
-    location.taken_by_user = user.id
-    update_item_attribute(user, msg, "taken_by_user", user.id)
+    asyncio.run(update_item_attribute(user, msg, "taken_by_user", user.id))
     add_missing_thing(location, user, dom)
     previous_step(user, msg)
 
@@ -610,20 +609,14 @@ def go_to_new_item_emoji(user, msg, update=False, search=False):
 
 
 def get_user_name(user_id):
-    if user_id == 1:
-        return 'DomData'
+
+    # user_id 1 is 'DomData', things created automatically, user 'DomData' with id 1 should be added to the DB on init
 
     user = find_or_create_user(user_id, users, True)
     if user.name is not None:
         return user.name
     else:
         return f"id{user_id}"
-
-
-def get_user_houses(user):
-    keys = mydb.get_user_keys(user.id)
-    houses = mydb.get_user_houses(keys)
-    return houses
 
 
 def go_to_main_menu(user, msg, reload=True):
@@ -673,7 +666,7 @@ def create_demo_house(user, msg, first_time=False):
 
     send_msg_txt(user.id, t('dd_example', user))
 
-    update_item_attribute(user, msg, "comment", t('dd_house_comment', user), auto=True)
+    asyncio.run(update_item_attribute(user, msg, "comment", t('dd_house_comment', user), auto=True))
 
     level2 = new_item(user, t('dd_level_2', user), "level", "level", "signal_strength", auto=True)
 
@@ -705,7 +698,7 @@ def create_demo_house(user, msg, first_time=False):
     cabinet = new_item(user, t('dd_cabinet', user), "cupboard", "cupboard", "file_cabinet", auto=True)
     bob = new_item(user, t('dd_bobmarley', user), "item", "infocarrier", "cd", auto=True, demo_role='bobmarley')
     user.step.location = bob.id
-    update_item_attribute(user, msg, "comment", t('dd_bob_comment', user), auto=True)
+    asyncio.run(update_item_attribute(user, msg, "comment", t('dd_bob_comment', user), auto=True))
 
     user.step.location = cabinet.id
 
@@ -716,9 +709,8 @@ def create_demo_house(user, msg, first_time=False):
     recordplayer = new_item(user, t('dd_recordplayer', user), "item", "tech", None, auto=True, demo_role='recordplayer')
     radio = new_item(user, t('dd_radio', user), "item", "tech", "radio", auto=True, demo_role='radio')
     user.step.location = radio.id
-    update_item_attribute(user, msg, "comment", t('dd_repair', user), auto=True)
-    update_item_attribute(user, msg, "highlighted_by", 1)
-    radio.highlighted_by = 1
+    asyncio.run(update_item_attribute(user, msg, "comment", t('dd_repair', user), auto=True))
+    asyncio.run(update_item_attribute(user, msg, "highlighted_by", 1))
     add_highlighted_thing(radio, user, dom)
 
     user.step.location = left_drawer.id
@@ -1039,17 +1031,6 @@ def go_up(user, msg):
     send_item_to_user(user, dir_txt, keyboard_type)
 
 
-def save_request_to_file(user, txt, file_path):
-    if isinstance(user, User) and user.name is not None:
-        user_str = f"{user.name} ({user.id})"
-    else:
-        user_str = f"User {user}"
-
-    with open(file_path, "a", encoding="utf-8") as f:
-        now = datetime.datetime.now().strftime("%Y.%m.%d, %H:%M:%S")
-        f.write(f"{now} {user_str}:\n{txt}\n\n")
-
-
 def go_to_item(user, msg):
     txt = msg.text
     if str(txt).startswith("/"):
@@ -1062,7 +1043,7 @@ def go_to_item(user, msg):
 
     if dir is None:
         send_msg_txt(user.id, f"{t('cant_find', user)} \"{msg.text}\" {t('try_search', user)}", remove_keyboard=False)
-        save_request_to_file(user, txt, os.path.join('conversation_logs', 'failed_requests.log'))
+        myfiles.save_request_to_file(user, txt, ('conversation_logs', 'failed_requests.log'))
         time.sleep(1)
         previous_step(user, msg)
         return
@@ -1146,17 +1127,6 @@ def add_item_photo_ftp(user, item_id):
     return True
 
 
-def tags_prepare(tags, count):
-    if tags is None:
-        return None
-    new_tags = tags[:count]
-    new_tags_new_format = []
-    for t in new_tags:
-        tag = {"c": round(t.get("confidence"), 2), "tag": t.get("tag").get("en")}
-        new_tags_new_format.append(tag)
-    return new_tags_new_format
-
-
 def save_photo_and_get_tags(user, msg, new_item=False, search=False, resolution=400):
     send_msg_txt(user.id, "⏳")
 
@@ -1175,7 +1145,7 @@ def save_photo_and_get_tags(user, msg, new_item=False, search=False, resolution=
                                                             'box'} or (
             new_item and user.step.new_item_type == "item") or search:
         user.new_action('imagga', status='complete')
-        tags = imagga_API.get_image_tags(user, f'images/{temp_pic_name}.jpg')
+        tags = imagga_API.get_image_tags(user, os.path.join(myfiles.temp_img_dir, f'{temp_pic_name}.jpg'))
 
         if tags is None:
             send_msg_to_developer(f'Imagga refused to respond:\nUser: {user.name} {user.id}')
@@ -1203,7 +1173,7 @@ def new_item_with_photo(user, msg):
         return
 
     user.step.temp_item_tags = tags
-    user.step.new_item_tags = tags_prepare(tags, tags_count)
+    user.step.new_item_tags = Item.tags_prepare(tags, tags_count)
     user.step.new_item_with_photo = True
 
     if msg.caption is not None:
@@ -1254,16 +1224,6 @@ def offer_user_name_variants(user, msg, tags):
     user.step.name = "new_item"
 
 
-def clear_new_item_info(user):
-    user.step.new_item_name = ""
-    user.step.new_item_type = ""
-    user.step.new_item_class = ""
-    user.step.new_item_with_photo = False
-    user.step.new_item_tags = []
-    user.step.temp_item_tags = []
-    user.step.new_item_emoji_str = ""
-
-
 def step_similar_object(user, msg):
     if msg.text in {"Yes", "Да"}:
         if user.step.new_item_name is not None and user.step.new_item_name != "":
@@ -1271,7 +1231,7 @@ def step_similar_object(user, msg):
         else:
             offer_user_name_variants(user, msg, user.step.temp_item_tags)
     elif msg.text in {"No", "Нет"}:
-        clear_new_item_info(user)
+        user.clear_new_item_info()
         go_to_new_item_name(user, msg)
     else:
         user.step.name = "main_menu"
@@ -1280,7 +1240,7 @@ def step_similar_object(user, msg):
 
 def step_new_item(user, msg):
     if if_canceled(user, msg):
-        clear_new_item_info(user)
+        user.clear_new_item_info()
         return
 
     if msg.text is not None and msg.text != "" and msg.text.startswith('/'):
@@ -1336,7 +1296,7 @@ def step_new_item_class_update(user, msg):
 
 def step_new_item_class(user, msg, update=False, search=False):
     if if_canceled(user, msg):
-        clear_new_item_info(user)
+        user.clear_new_item_info()
         return
     class_str = item_classes_dic.get(msg.text)
     if class_str is None:
@@ -1370,8 +1330,8 @@ def step_new_item_emoji(user, msg, update=False, search=False):
         emoji_str = emoji_str.replace(":", "")
 
     if update:
-        update_item_attribute(user, msg, "item_class", user.step.new_item_class)
-        update_item_attribute(user, msg, "item_emoji", emoji_str)
+        asyncio.run(update_item_attribute(user, msg, "item_class", user.step.new_item_class))
+        asyncio.run(update_item_attribute(user, msg, "item_emoji", emoji_str))
         previous_step(user, msg)
     elif search:
         if emoji_str is None:
@@ -1434,7 +1394,7 @@ def go_to_change_item_emoji(user, msg):
 
     new_name = filter_text(msg.text)
 
-    update_item_attribute(user, msg, "name", new_name)
+    asyncio.run(update_item_attribute(user, msg, "name", new_name))
     previous_step(user, msg)
 
 
@@ -1548,7 +1508,7 @@ def step_search_by_name(user, msg, search_by_class=False, search_by_emoji=False)
             go_to_search(user, msg)
             return
 
-        s_query = tags_prepare(tags, tags_count)
+        s_query = Item.tags_prepare(tags, tags_count)
     elif not search_by_class and not search_by_emoji and not search_by_photo:
         s_query = filter_text(msg.text)
     else:
@@ -1666,9 +1626,9 @@ def step_delete_img(user, msg):
             previous_step(user, msg)
             return
 
-        update_item_attribute(user, msg, "has_img", False)
+        asyncio.run(update_item_attribute(user, msg, "has_img", False))
         if item.demo_role is not None:
-            update_item_attribute(user, msg, "demo_role", False)
+            asyncio.run(update_item_attribute(user, msg, "demo_role", False))
         # Also, need to remove image tags... Searching by img can still find the item, bug or feature?
 
     previous_step(user, msg)
@@ -1679,22 +1639,9 @@ def step_delete_item(user, msg):
         item = find_item_by_id(user.step.location, dom, user)
         remove_missing_thing(item, user, dom)
         remove_highlighted_thing(item, user, dom)
-        delete_item(user, msg, item, dom)
+        asyncio.run(delete_item(user, msg, item, dom))
     else:
         previous_step(user, msg)
-
-
-def get_appropriate_resolution(user, msg):
-    if user.step.new_item_type == 'item':
-        resolution = 400
-        if user.premium:
-            resolution = 720
-    else:
-        resolution = 600
-        if user.premium:
-            resolution = 900
-
-    return resolution
 
 
 def step_add_img(user, msg):
@@ -1705,7 +1652,7 @@ def step_add_img(user, msg):
         go_to_add_img(user, msg)
         return
 
-    resolution = get_appropriate_resolution(user, msg)
+    resolution = user.get_appropriate_resolution()
 
     tags = save_photo_and_get_tags(user, msg, resolution=resolution)
 
@@ -1714,12 +1661,11 @@ def step_add_img(user, msg):
         go_to_add_img(user, msg)
         return
 
-    new_item_tags = tags_prepare(tags, 20)
+    new_item_tags = Item.tags_prepare(tags, 20)
 
     item = find_item_by_id(user.step.location, dom, user)
     if item is not None:
         item.tags = new_item_tags
-        item.file_id = None
 
     if tags is not None:
         new_item_tags = json.dumps(new_item_tags)
@@ -1729,15 +1675,15 @@ def step_add_img(user, msg):
     upload_suc = add_item_photo_ftp(user, user.step.location)
 
     if upload_suc:
-        update_item_attribute(user, msg, "has_img", True)
-        update_item_attribute(user, msg, "tags", new_item_tags)
-        update_item_attribute(user, msg, "file_id", None, True, item)
+        asyncio.run(update_item_attribute(user, msg, "has_img", True))
+        asyncio.run(update_item_attribute(user, msg, "tags", new_item_tags))
+        asyncio.run(update_item_attribute(user, msg, "file_id", None, True, item))
 
-        update_item_attribute(user, msg, "tagged_by", user.id)
-        update_item_attribute(user, msg, "tags_date", datetime.datetime.now())
+        asyncio.run(update_item_attribute(user, msg, "tagged_by", user.id))
+        asyncio.run(update_item_attribute(user, msg, "tags_date", datetime.datetime.now()))
 
         if item.demo_role is not None:
-            update_item_attribute(user, msg, "demo_role", None)
+            asyncio.run(update_item_attribute(user, msg, "demo_role", None))
 
     previous_step(user, msg)
 
@@ -1755,7 +1701,7 @@ def step_comment_item(user, msg):
         send_msg_txt(user.id, t('comment_is_too_short', user), remove_keyboard=False)
         return
 
-    update_item_attribute(user, msg, "comment", new_comment)
+    asyncio.run(update_item_attribute(user, msg, "comment", new_comment))
     previous_step(user, msg)
 
 
@@ -1769,13 +1715,14 @@ def step_rename_item(user, msg):
         send_msg_txt(user.id, t('name_is_too_short', user), remove_keyboard=False)
         return
 
-    update_item_attribute(user, msg, "name", new_name)
+    asyncio.run(update_item_attribute(user, msg, "name", new_name))
     previous_step(user, msg)
 
 
-def delete_item(user, msg, item, items):
-    ta = threading.Thread(target=lambda: mydb.delete_item(item.id))
-    ta.start()
+async def delete_item(user, msg, item, items):
+
+    # item will be removed from DB after synchronous code finishes executing
+    asyncio.create_task(mydb.delete_item(item.id))
 
     if item.type in {"house", "dom"}:
         mydb.delete_dom_and_key(item.dom_id)
@@ -1805,7 +1752,8 @@ def delete_item(user, msg, item, items):
     previous_step(user, msg)
 
 
-def update_item_attribute(user, msg, atr, value, change_file_id=False, change_file_id_item=False, auto=False):
+async def update_item_attribute(user, msg, atr, value, change_file_id=False, change_file_id_item=False, auto=False):
+
     if not change_file_id:
         item = find_item_by_id(user.step.location, dom, user)
     else:
@@ -1821,110 +1769,10 @@ def update_item_attribute(user, msg, atr, value, change_file_id=False, change_fi
     if atr in {"location", "dom_id"}:
         item = user.item_in_hands
 
-    ta = threading.Thread(target=lambda: mydb.update_item("dom", "id", atr, value, item.id))
-    ta.start()
+    reply = await item.update_and_form_reply(user, atr, value, auto)
 
-    reply = ""
-
-    if atr == "demo_role":
-        # no reply needed
-        return
-    if atr == "file_id":
-        # no reply needed
-        return
-    if atr == "tags":
-        # no reply needed
-        return
-    if atr == "tagged_by":
-        # no reply needed
-        return
-    if atr == "tags_date":
-        # no reply needed
-        return
-    if atr == "dom_id":
-        # no reply needed
-        return
-    if atr == "location":
-        item.date = datetime.datetime.now()
-        ta = threading.Thread(target=lambda: mydb.update_item("dom", "id", "last_move_date", item.date, item.id))
-        ta.start()
-        # no reply needed
-        return
-    if atr == "taken_by_user":
-        item.last_taken_date = datetime.datetime.now()
-        ta = threading.Thread(
-            target=lambda: mydb.update_item("dom", "id", "last_taken_date", item.last_taken_date, item.id))
-        ta.start()
-        # no reply needed
-        return
-    if atr == "highlighted_by":
-        item.highlighted_date = datetime.datetime.now()
-        ta = threading.Thread(
-            target=lambda: mydb.update_item("dom", "id", "highlighted_date", item.highlighted_date, item.id))
-        ta.start()
-        # no reply needed
-        return
-    if atr == "has_img":
-        item.has_img = value
-        if value:
-            reply = f"{t('pic_of', user)} *{item.name}* {t('is_uploaded', user)}"
-        else:
-            reply = f"{t('pic_of', user)} *{item.name}* {t('is_deleted', user)}"
-    elif atr == "name":
-        if item.type in {"house", "dom"}:
-            ta = threading.Thread(target=lambda: mydb.update_item("doms", "id", atr, value, item.dom_id))
-            ta.start()
-        old_name = item.name
-        item.name = value
-        reply = f"*{old_name}* {t('renamed_to', user)} *{value}*"
-    elif atr == "comment":
-
-        item.comment = value
-        item.commented_by_user = user.id
-
-        if auto:
-            item.commented_by_user = 1
-
-        item.comment_date = datetime.datetime.now()
-        ta = threading.Thread(
-            target=lambda: mydb.update_item("dom", "id", "commented_by_user", item.commented_by_user, item.id))
-        ta.start()
-        ta2 = threading.Thread(target=lambda: mydb.update_item("dom", "id", "comment_date", item.comment_date, item.id))
-        ta2.start()
-
-        if not auto:
-            if value is None:
-                reply = f"{t('item_comment_deleted', user)}"
-            else:
-                reply = f"{t('the_object', user)} *{item.name}* {t('item_commented', user)}"
-        else:
-            return
-
-    elif atr == "item_class":
-
-        if item.item_class is not None:
-            old_class_str = item.item_class
-            if value == old_class_str:
-                reply = f"{t('class_remains', user)} *{t(value, user).lower()}*"
-            else:
-                reply = f"{t('class_changed', user)} {t('from', user)} *{t(old_class_str, user).lower()}* {t('to', user)} *{t(value, user).lower()}*"
-        else:
-            reply = f"{t('class_changed', user)} {t('to', user)} *{t(value, user).lower()}*"
-        item.item_class = value
-    elif atr == "item_emoji":
-        new_emoji = emoji.emojize(f":{value}:", use_aliases=True)
-        if value is None or value == "None":
-            new_emoji = None
-            reply = f"{t('emoji_removed', user)}"
-        else:
-            if item.item_emoji is not None:
-                old_emoji_str = item.item_emoji
-                reply = f"{t('emoji_changed', user)} {t('from', user)} {old_emoji_str} {t('to', user)} {new_emoji}"
-            else:
-                reply = f"{t('emoji_changed', user)} {t('to', user)} {new_emoji}"
-        item.item_emoji = new_emoji
-
-    send_msg_txt(user.id, reply)
+    if reply is not None and reply != '':
+        send_msg_txt(user.id, reply)
 
 
 def step_new_house(user, msg, auto=False, demo_role=None, has_img=False):
@@ -1947,9 +1795,9 @@ def step_new_house(user, msg, auto=False, demo_role=None, has_img=False):
         send_msg_txt(user.id, "⏳")
         user.busy = True
 
-    key = get_and_add_unique_key(user)
+    key = user.get_and_add_unique_key()
     mydb.add_house(house_name, key)
-    houses = mydb.get_user_houses((key,))
+    houses = mydb.get_user_houses_by_key((key,))
 
     if not auto:
         user.busy = False
@@ -1969,14 +1817,6 @@ def step_new_house(user, msg, auto=False, demo_role=None, has_img=False):
             user.step = Step("main_menu", id_int)
             send_item_to_user(user, dir_txt, "house")
         return current_dir
-
-
-def get_and_add_unique_key(user):
-    key = rt.get_random_string(32)
-    db_reply = mydb.check_is_ok(key)
-    if db_reply[1]:
-        mydb.add_access_key(user, key)
-        return key
 
 
 def step_lang_choice_first(user, msg):
@@ -2064,7 +1904,7 @@ def special_words_check(telegram_id, msg):
             if 'wrw' in special_topics_dic.keys():
                 if msg.sticker.set_name.lower() in special_topics_dic['wrw']:
                     send_msg_txt(telegram_id, random.choice(random_belarus_stickers), False, True, remove_keyboard=False)
-                    save_request_to_file(telegram_id, 'sticker', os.path.join('conversation_logs', 'special_topics.log'))
+                    myfiles.save_request_to_file(telegram_id, 'sticker', ('conversation_logs', 'special_topics.log'))
                     return True
         return False
 
@@ -2074,7 +1914,7 @@ def special_words_check(telegram_id, msg):
     if 'wrw' in special_topics_dic.keys():
         if any(l in msg.text.lower() for l in special_topics_dic['wrw']):
             send_msg_txt(telegram_id, random.choice(random_belarus_stickers), False, True, remove_keyboard=False)
-            save_request_to_file(telegram_id, 'flag', os.path.join('conversation_logs', 'special_topics.log'))
+            myfiles.save_request_to_file(telegram_id, 'flag', ('conversation_logs', 'special_topics.log'))
             found = True
 
     if 'belarus' in special_topics_dic.keys():
@@ -2082,20 +1922,20 @@ def special_words_check(telegram_id, msg):
             send_msg_txt(telegram_id, "Жыве вечна!", remove_keyboard=False)
             time.sleep(1)
             send_msg_txt(telegram_id, random.choice(random_belarus_stickers), False, True, remove_keyboard=False)
-            save_request_to_file(telegram_id, msg.text, os.path.join('conversation_logs', 'special_topics.log'))
+            myfiles.save_request_to_file(telegram_id, msg.text, ('conversation_logs', 'special_topics.log'))
             found = True
 
     if 'ukraine' in special_topics_dic.keys():
         if any(l in msg.text.lower() for l in special_topics_dic['ukraine']):
             send_msg_txt(telegram_id, "Героям слава!", remove_keyboard=False)
             time.sleep(1)
-            save_request_to_file(telegram_id, msg.text, os.path.join('conversation_logs', 'special_topics.log'))
+            myfiles.save_request_to_file(telegram_id, msg.text, ('conversation_logs', 'special_topics.log'))
             found = True
 
     if 'censored' in special_topics_dic.keys():
         if any(l in msg.text.lower() for l in special_topics_dic['censored']):
             send_msg_txt(telegram_id, "🙈", remove_keyboard=False)
-            save_request_to_file(telegram_id, msg.text, os.path.join('conversation_logs', 'censored.log'))
+            myfiles.save_request_to_file(telegram_id, msg.text, ('conversation_logs', 'censored.log'))
             found = True
 
     if 'humiliation' in special_topics_dic.keys():
@@ -2103,7 +1943,7 @@ def special_words_check(telegram_id, msg):
             send_msg_txt(telegram_id, 'CAACAgIAAxkBAAIWHl_hIO765r2tvb0KFSjENVvhJc5VAAJZAAOELrgGmubs-nA_1bseBA', False,
                          True,
                          remove_keyboard=False)
-            save_request_to_file(telegram_id, msg.text, os.path.join('conversation_logs', 'humiliation.log'))
+            myfiles.save_request_to_file(telegram_id, msg.text, ('conversation_logs', 'humiliation.log'))
             found = True
 
     return found
@@ -2195,7 +2035,7 @@ def work_on_msg(telegram_id, msg, users):
 
                 # Quickly adding an item with a picture (without selecting the New Item command),
                 # not available at the house and floor levels
-                if u_parent.type in ("house", "dom", "level"):
+                if u_parent is None or u_parent.type in ("house", "dom", "level"):
                     send_msg_txt(telegram_id, t("img_unexpected", user), remove_keyboard=False)
                     return
             if user.step.new_item_type == "":
@@ -2321,274 +2161,6 @@ def continue_startup(user, msg):
     send_msg_txt(user.id, t('dd_video_tutorial', user), remove_keyboard=False, must_close_tags=False)
 
 
-def search_item_by_class_or_emoji(query, my_things, by_emoji=False, top_level_only=False):
-    found_results_list = []
-
-    for thing in my_things:
-        if by_emoji:
-            value = thing.item_emoji
-        else:
-            value = thing.item_class
-
-        if value == query:
-            found_results_list.append({'item': thing, 'min_dist': 0})
-
-        if len(thing.space) != 0 and not top_level_only:
-            found_things_inside = search_item_by_class_or_emoji(query, thing.space, by_emoji)
-            if len(found_things_inside) > 0:
-                found_results_list.extend(found_things_inside)
-
-    return found_results_list
-
-
-def normalize_tags(tags):
-    min = tags[-1]['c']
-    max = tags[0]['c']
-    range = max - min
-    for t in tags:
-        t['c'] = (t['c'] - min) * (max / range)
-
-    return tags
-
-
-def find_tags_distance(tags1_i, tags2_i):
-    if tags1_i is None or tags2_i is None:
-        return None
-
-    tags1 = copy.deepcopy(tags1_i)
-    tags2 = copy.deepcopy(tags2_i)
-
-    if len(tags1) > len(tags2):
-        tags1 = tags1[:len(tags2)]
-    if len(tags2) > len(tags1):
-        tags2 = tags2[:len(tags1)]
-
-    dist = 0
-    all_tags = set()
-
-    for t1 in tags1:
-        all_tags.add(t1.get("tag"))
-
-    for t2 in tags2:
-        all_tags.add(t2.get("tag"))
-
-    for k in all_tags:
-        a1 = next((x for x in tags1 if x["tag"] == k), None)
-        a2 = next((x for x in tags2 if x["tag"] == k), None)
-        if a1 is None:
-            dist += a2["c"]
-        elif a2 is None:
-            dist += a1["c"]
-        elif a1 is not None and a2 is not None:
-            dist += abs(a1["c"] - a2["c"])
-        else:
-            print("No way:)")
-
-    return dist
-
-
-def search_item_by_photo(stags, my_things, max_dist=100, top_level_only=False):
-    found_results_list = []
-
-    for thing in my_things:
-
-        if thing.tags is not None and len(thing.tags) != 0 and thing.type not in {"house", "dom", "level", "room"}:
-            dist = find_tags_distance(stags, thing.tags)
-            if dist is not None and dist < max_dist:
-                found_results_list.append({'item': thing, 'min_dist': dist})
-
-        if len(thing.space) != 0 and not top_level_only:
-            found_things_inside = search_item_by_photo(stags, thing.space, max_dist)
-            if len(found_things_inside) > 0:
-                found_results_list.extend(found_things_inside)
-
-    return found_results_list
-
-
-def replace_multiply_strings_to_one(s, new_c=None, c_array=None):
-    if c_array is None:
-        c_array = [",", ".", ";", ":", "(", ")", "-", "+", "[", "]", "}", "{"]
-    if new_c is None:
-        new_c = ""
-    for c in c_array:
-        s = s.replace(c, new_c)
-    return s
-
-
-def search_item_by_part_of_name(query, my_things, distance_limit, top_level_only=False, things_only=False):
-    query = query.lower()
-    query = replace_multiply_strings_to_one(query)
-    query = query.replace('ё', "е")
-
-    found_results_list = []
-
-    for thing in my_things:
-
-        s_inf = {'close_words_factor': 0}
-        min_dist = 100
-
-        for qw in query.split():
-            th_name = thing.name
-            th_name = th_name.lower()
-            th_name = replace_multiply_strings_to_one(th_name)
-            th_name = th_name.replace('ё', "е")
-            for word in th_name.split():
-                if len(qw) > len(word):
-                    long_word_len = len(qw)
-                else:
-                    long_word_len = len(word)
-                dist = compare(word, qw)
-                if dist < distance_limit and (dist / long_word_len * 5) < min_dist:
-                    min_dist = dist / long_word_len * 5
-                if dist == 0:
-                    v = 4 - len(word)
-                    if v < min_dist:
-                        s_inf['close_words_factor'] = s_inf['close_words_factor'] + v
-                        min_dist = v
-
-        if min_dist <= distance_limit:
-            if not (thing.item_class in {'dom', 'house', 'level', 'room', 'cupboard', 'storage',
-                                         'box'} and things_only):
-                s_inf.update({'item': thing, 'min_dist': min_dist})
-                found_results_list.append(s_inf)
-
-        if len(thing.space) != 0 and not top_level_only:
-            found_things_inside = search_item_by_part_of_name(query, thing.space, distance_limit)
-            if len(found_things_inside) > 0:
-                found_results_list.extend(found_things_inside)
-
-    return found_results_list
-
-
-def sort_results_by_words_and_full_distance(all_results, query, max_total_dist=50):
-    for one_r in all_results:
-        all_name_dist = compare(one_r['item'].name, query)
-        if one_r['min_dist'] <= 0:
-            all_name_dist = all_name_dist / 6
-        if 0 < one_r['min_dist'] <= 1:
-            all_name_dist = all_name_dist / 3
-        if len(one_r['item'].name.split()) == 1 and one_r['min_dist'] > 1:
-            all_name_dist = all_name_dist * 4
-        one_r.update({'all_name_dist': all_name_dist})
-        one_r.update({'total_dist': one_r['min_dist'] + one_r['all_name_dist'] / 2 + one_r['close_words_factor'] * 2})
-
-    max_dist_from_length = len(query) / 3
-    if max_dist_from_length < 2:
-        max_dist_from_length = 2
-
-    all_results = list(
-        filter(lambda r: r['total_dist'] < max_total_dist or r['min_dist'] < max_dist_from_length, all_results))
-
-    return sorted(all_results, key=lambda r: r['total_dist'], reverse=False)
-
-
-def find_item_by_id(input_id, my_things, user, convert=False):
-    for thing in my_things:
-        if convert:
-            id = user.id_conv(input_id, False)
-        else:
-            id = input_id
-        if id == thing.id:
-            return thing
-        if len(thing.space) != 0:
-            item = find_item_by_id(input_id, thing.space, user, convert)
-            if item is not None:
-                return item
-    return None
-
-
-def find_item_path(user, item, items, include_self_name=False, include_emoji=False, include_class=True,
-                   first_turn=False):
-    item_class_str = ""
-    item_self_name_str = ""
-    item_emoji_str = ""
-
-    if include_self_name:
-        if item.item_class is not None and item.item_class is not None and include_class:
-            item_class_str = f" ({t(item.item_class, user).lower()})"
-
-        if include_emoji:
-            if item.item_emoji is not None:
-                item_emoji_str = item.item_emoji + " "
-
-        item_self_name_str = f"\n{item_emoji_str}*{item.name}*{item_class_str}"
-
-    if item.location not in {-1, 0}:
-        parent = find_item_by_id(item.location, items, user)
-        user.update_dic(parent.id)
-        up_path = find_item_path(user, parent, items, False, include_emoji, include_class)
-
-        if parent is None:
-            return "/DomData"
-
-        parent_class_str = ""
-        if parent.item_class is not None and include_class:
-            parent_class_str = f" ({t(parent.item_class, user).lower()})"
-
-        parent_emoji_str = ""
-        if include_emoji:
-            if parent.item_emoji is not None:
-                parent_emoji_str = parent.item_emoji + " "
-
-        first_turn_str = ""
-        if first_turn:
-            first_turn_str = "\n      /up ⬆️"
-
-        full_path = f"{up_path}\n/{user.id_conv(parent.id)} {parent_emoji_str}_{parent.name}{parent_class_str}_{first_turn_str}{item_self_name_str}"
-
-        if full_path.count('\n') > 1 and t('path', user) not in full_path:
-            p = full_path.find('\n') + 1
-            full_path = full_path[:p] + f"{t('path', user)}:\n" + full_path[p:]
-
-        return full_path
-    else:
-
-        first_turn_str = ""
-        if first_turn and item.location == 0:
-            first_turn_str = "\n      /up ⬆️"
-
-        return f"/DomData{first_turn_str}{item_self_name_str}"
-
-
-def format_path(path):
-    if path == '/DomData':
-        return path
-
-    content = path.split(':\n')
-
-    lines = content[len(content) - 1].split('\n')
-    nlines = len(lines)
-    max_tabs = 5
-
-    levels = nlines - 1
-
-    tab_c = 1
-    this_iter = 0
-
-    new_path = ''
-
-    for l in lines:
-        this_tab = ' ' * tab_c
-
-        l = this_tab + l
-
-        max_length = 48
-        if len(l) > max_length:
-            l = f"{l[:max_length - 3]}..._"
-
-        this_iter += 1
-
-        if this_iter >= 1 and tab_c < max_tabs:
-            this_iter = this_iter - 1
-            tab_c += 1
-
-        new_path += l + '\n'
-
-    if len(content) > 1:
-        new_path = content[0] + ':\n' + new_path
-    return new_path[0:-2]
-
-
 # returns a string displaying the object, the path to it, its contents, etc.,
 def show_dir(item, items, user, top):
     dir_txt = ""
@@ -2666,7 +2238,7 @@ def show_dir(item, items, user, top):
             if it.item_emoji is not None:
                 item_emoji = it.item_emoji + " "
             if len(it.space) > 0:
-                items_count_and_emoji_inside = count_items_inside(it, True)
+                items_count_and_emoji_inside = it.count_items_inside(True)
                 emoji_top = ""
                 if items_count_and_emoji_inside[0] != 0:
                     if len(items_count_and_emoji_inside[1]) != 0 and it.type not in {'dom', 'house', 'level'}:
@@ -2758,58 +2330,6 @@ def emoji_chart(emojies, top=10):
     return fin_res
 
 
-def get_dir(id, items, user, by_user=False):
-    item = find_item_by_id(id, items, user, by_user)
-
-    if id == 0:
-        top = True
-        filtered_items = list(items)
-        filtered_items = list(filter(lambda item: item.dom_id in user.houses, filtered_items))
-        for fi in filtered_items:
-            user.update_dic(fi.id)
-        item = Item(0, f"{t('my_doms', user)}", -1, "top", datetime.datetime.now(), 0, None, None, 0, None, None, None,
-                    filtered_items)
-        return item
-
-    top = False
-    if item is None:
-        return None
-        # return None instead of the top level if not found, so that we first display a message "Not found"
-        # And only then - go to the top level (when we don't find the object)
-
-    else:
-        if item.dom_id not in user.houses:
-            return None
-
-    return item
-
-
-def count_items_inside(item, first=False):
-    emojies = []
-    count = 1
-
-    # Not considering houses, floors, rooms as items to count
-    if item.item_class in ['house', 'dom', 'level', 'room'] or first:
-        count = 0
-
-    if len(item.space) == 0:
-        if item.item_emoji is not None and item.item_emoji != "" and item.item_class not in {'house', 'dom', 'level',
-                                                                                             'room', 'cupboard',
-                                                                                             'storage', 'box'}:
-            emojies.append(item.item_emoji)
-        return [count, emojies]
-    else:
-        for it in item.space:
-            res = count_items_inside(it)
-            count = count + res[0]
-            emojies.extend(res[1])
-
-        if count < 0:
-            pass
-
-        return [count, emojies]
-
-
 def remove_missing_thing(item, user, items):
     item_dom = find_item_dom(item, user, items)
     item_dom.dom_missing_things = [it for it in item_dom.dom_missing_things if it.id != item.id]
@@ -2895,7 +2415,7 @@ def get_items(user, items):
     user.loading = True
 
     user.houses = []
-    temp_houses = get_user_houses(user)
+    temp_houses = user.get_user_houses()
 
     # if the user doesn't have rights to any house, then leave
     if len(temp_houses) == 0:
@@ -2947,9 +2467,6 @@ def sort_dom(items, user):
                     logger.error("error while sorting dom:", ex)
 
 
-logger.info("DomData server started")
-
-
 def send_msg_txt_and_video(m, txt, vid, file_id=None, keyboard=None):
     logger.debug(f"Sending a message {txt} with video to user {m}")
     done = False
@@ -2973,10 +2490,13 @@ def send_msg_txt_and_video(m, txt, vid, file_id=None, keyboard=None):
                                      parse_mode='Markdown', supports_streaming=True)
 
             done = True
+        except ApiException as error:
+            tries += 1
+            logger.exception(f"Can't send message to Telegram, ApiException: {error}")
         except Exception as error:
             attachment = vid
-            tries = tries + 1
-            logger.exception("Can't send message to Telegram, Error: ")
+            tries += 1
+            logger.exception(f"Unexpected error while sending message to Telegram: {error}")
 
 
 def send_msg_txt_and_keyboard(m, txt, keyboard, pic=None, item=None, must_close_tags=True):
@@ -2999,6 +2519,8 @@ def send_msg_txt_and_keyboard(m, txt, keyboard, pic=None, item=None, must_close_
     if must_close_tags:
         txt = close_tags(txt)
 
+    use_file_id = True
+
     while not done and tries < 10:
         try:
             if pic is None or pic is False:
@@ -3007,12 +2529,13 @@ def send_msg_txt_and_keyboard(m, txt, keyboard, pic=None, item=None, must_close_
                     reply_markup=keyboard, parse_mode="Markdown")
             else:
 
-                if item is not None and item.file_id is not None and tries < 2:
+                if item is not None and item.file_id is not None and tries < 2 and use_file_id:
                     inf = bot.send_photo(m, photo=item.file_id, caption=txt, reply_markup=keyboard,
                                          parse_mode='Markdown')
                 else:
 
                     send_msg_txt(m, "⏳")
+                    logger.debug(f'Updating picture telegram id')
 
                     path = myfiles.download_pic(pic)
                     if path is None:
@@ -3027,20 +2550,27 @@ def send_msg_txt_and_keyboard(m, txt, keyboard, pic=None, item=None, must_close_
                         send_msg_txt(m, "error: file not found")
                         return
 
+                    # Sending picture without file_id
                     inf = bot.send_photo(m, open(path, 'rb'), txt, reply_markup=keyboard, parse_mode='Markdown')
 
                     if inf is not None:
+                        # Updating file_id
                         file_id = inf.photo[0].file_id
-                        item.file_id = file_id
-                        update_item_attribute(None, None, "file_id", file_id, True, item)
+                        asyncio.run(update_item_attribute(None, None, "file_id", file_id, True, item))
                     else:
                         logger.error("picture error")
                     myfiles.delete_file(path)
 
             done = True
+        except ApiException as error:
+            tries += 1
+            logger.exception(f"Can't send message to Telegram, ApiException: {error}")
+            if error.result.status_code == 400:
+                logger.warning(f"Picture file_id has been changed")
+                use_file_id = False
         except Exception as error:
-            tries = tries + 1
-            logger.exception(f"Can't send message to Telegram, Error: {error}")
+            tries += 1
+            logger.exception(f"Unexpected error while sending message to Telegram: {error}")
 
     if add_txt is not None:
         send_msg_txt(m, add_txt, remove_keyboard=False)
@@ -3097,11 +2627,13 @@ def send_msg_txt(uid_or_msg, txt, reply=False, sticker=False, remove_keyboard=Tr
                     else:
                         bot.send_message(uid_or_msg, tp, parse_mode='Markdown')
                 done = True
+            except ApiException as error:
+                tries += 1
+                logger.exception(f"Can't send message to Telegram, ApiException: {error}")
             except Exception as error:
-                tries = tries + 1
-                logger.exception(f"Can't send message to Telegram, Error: {error}")
+                tries += 1
+                logger.exception(f"Unexpected error while sending message to Telegram: {error}")
                 time.sleep(1 + tries)
-                # start_polling(bot)
 
 
 def keyboard(args):
@@ -3119,9 +2651,6 @@ def keyboard(args):
 def send_msg_to_developer(txt):
     for dev in devs:
         send_msg_txt(dev, txt, remove_keyboard=False)
-
-
-send_msg_to_developer('DomData server started')
 
 
 @bot.message_handler(commands=['starttest'])
@@ -3311,42 +2840,12 @@ user_commands.update(dict.fromkeys(
      'мои_дома', '/мои_дома'],
     go_top_level))
 
-item_types_dic = dict.fromkeys(['Closet', 'Шкаф'], 'cupboard')
-item_types_dic.update(dict.fromkeys(['Storage', 'Место хранения'], 'storage'))
-item_types_dic.update(dict.fromkeys(['Box', 'Коробка'], 'box'))
-item_types_dic.update(dict.fromkeys(['Item', 'Вещь'], 'item'))
-
-item_classes_dic = dict.fromkeys(['Documents, books, magazines', 'Документы, книги, журналы'], 'paper')
-item_classes_dic.update(dict.fromkeys(['Stationery', 'Концелярские товары'], 'stationery'))
-item_classes_dic.update(dict.fromkeys(['CDs, tapes, flash cards', 'CD, кассеты, пленки'], 'infocarrier'))
-item_classes_dic.update(dict.fromkeys(['Electronics', 'Техника'], 'tech'))
-item_classes_dic.update(dict.fromkeys(['Tools and gear', 'Инструменты и комплектующие'], 'tools_and_gear'))
-item_classes_dic.update(dict.fromkeys(['Clothes', 'Одежда'], 'clothes'))
-item_classes_dic.update(dict.fromkeys(['Sport', 'Спорт'], 'sport'))
-item_classes_dic.update(dict.fromkeys(['Music', 'Музыка'], 'music'))
-item_classes_dic.update(dict.fromkeys(['Toys', 'Игрушки'], 'toys'))
-item_classes_dic.update(dict.fromkeys(['Food', 'Еда'], 'food'))
-item_classes_dic.update(dict.fromkeys(['Tableware', 'Посуда'], 'tableware'))
-item_classes_dic.update(dict.fromkeys(['Plant', 'Растение'], 'plant'))
-item_classes_dic.update(dict.fromkeys(['etc', 'Другое'], 'etc'))
-
-random_stickers = ["CAADAgADFgADwDZPE2Ah1y2iBLZnFgQ", "CAADAgADCwADlp-MDpuVH3sws_a7FgQ",
-                   "CAADAgADEgADWbv8JfBCObndTSUaFgQ",
-                   "CAADAgADcQAD9wLID3kKxPT9t4jLFgQ", "CAADAgADpAADMNSdEU7MT7Gv4LoZFgQ",
-                   "CAADAgAD8AEAAsoDBgtTNPb4vSaRRxYE",
-                   "CAADAgADEgADO2AkFBf2ezO6T5XEFgQ", "CAADAgAD9wADVp29CgtyJB1I9A0wFgQ",
-                   "CAADAgADpwADFkJrCtlzNEqUNHMpFgQ",
-                   "CAADAgAD9QIAArVx2gam8H9Dr5OR_xYE", "CAADAgADswADMNSdET9j0fISlCKpFgQ",
-                   "CAADAgADfgADlp-MDnGDEZ4sXLblFgQ",
-                   'CAACAgIAAxkBAAIV_V_hG6ZPIIzPNN3VIqE2ewwnH01iAAL7AANSiZEjHEzYB3L4zKweBA',
-                   'CAACAgIAAxkBAAIWFl_hH0JnLlOP3wO6LgABVRhNXLLFfwAC9wADUomRI6J6Ym0_4ftHHgQ']
-
-random_belarus_stickers = ['CAACAgIAAxkBAAIV_V_hG6ZPIIzPNN3VIqE2ewwnH01iAAL7AANSiZEjHEzYB3L4zKweBA',
-                           'CAACAgIAAxkBAAIWFl_hH0JnLlOP3wO6LgABVRhNXLLFfwAC9wADUomRI6J6Ym0_4ftHHgQ']
-
 
 emoji_dic = myfiles.open_categories('emoji.txt', ':')
 special_topics_dic = myfiles.open_categories('special_topics.txt')
+
+logger.info("DomData server started")
+send_msg_to_developer('DomData server started')
 
 
 def start_polling(b):

@@ -8,9 +8,14 @@ import io
 from PIL import Image
 import requests
 
+temp_img_dir = 'temp_img'
 
 logger = mylogger.get_logger(__name__)
 
+from config_reader import read_config
+
+full_url_to_img_storage = read_config("config.ini", "ftp")['full_url']
+temp_img_dir = read_config("config.ini", "files")['temp_img_dir']
 
 def open_categories(path, add_text_at_start_and_end='', to_lower=True):
     emoji_dic = dict()
@@ -65,11 +70,11 @@ def resize_img(imgage, min_size):
 
 
 def download_pic(id):
-    url = f"http://litesound.com/DomData/img/item_{id}.jpg"
+    url = f"{full_url_to_img_storage}/item_{id}.jpg"
     myfile = requests.get(url)
     if myfile.status_code == 404:
         return None
-    path = f"images/item_{id}.jpg"
+    path = os.path.join(temp_img_dir, f'item_{id}.jpg')
     open(path, 'wb').write(myfile.content)
     return path
 
@@ -89,10 +94,10 @@ def save_pic(message, instname, bot, resize=False, new_size=None):
             if resize:
                 downloaded_file = resize_img(downloaded_file, new_size)
 
-            if not os.path.isdir('images'):
-                os.mkdir('images')
+            if not os.path.isdir(temp_img_dir):
+                os.mkdir(temp_img_dir)
 
-            with open(f"images/{instname}.jpg", "wb") as new_file:
+            with open(os.path.join(temp_img_dir, f"{instname}.jpg"), "wb") as new_file:
                 new_file.write(downloaded_file)
             done = True
             return True
@@ -105,8 +110,8 @@ def save_pic(message, instname, bot, resize=False, new_size=None):
 
 def delete_temp_pic(instname):
     try:
-        os.remove(f"images/{instname}.jpg")
-        logger.info("File Removed!")
+        os.remove(os.path.join(temp_img_dir, f"{instname}.jpg"))
+        logger.debug("Removed a temporary file")
         return True
     except EnvironmentError as error:
         logger.exception(f"Can't remove temp file. Error: {error}")
@@ -116,8 +121,23 @@ def delete_temp_pic(instname):
 def delete_file(path):
     try:
         os.remove(path)
-        logger.info("File Removed!")
+        logger.debug("Deleted a temp file")
         return True
     except EnvironmentError as error:
         logger.exception(f"Can't remove temp file. Error: {error}")
         return False
+
+
+def save_request_to_file(user, txt, file_path):
+    if isinstance(user, User) and user.name is not None:
+        user_str = f"{user.name} ({user.id})"
+    else:
+        user_str = f"User {user}"
+
+    if len(file_path) > 1:
+        if not os.path.isdir(file_path[0]):
+            os.mkdir(file_path[0])
+
+    with open(os.path.join(*file_path), "a", encoding="utf-8") as f:
+        now = datetime.now().strftime("%Y.%m.%d, %H:%M:%S")
+        f.write(f"{now} {user_str}:\n{txt}\n\n")

@@ -8,6 +8,10 @@ database=database
 host=ftp_host
 user=ftp_user
 passwd=ftp_password
+path=path_to_dir
+full_url=full_url_to_img_storage
+[files]
+temp_img_dir=temporary_images_directory
 [telegram]
 # Chatbot for production
 token=telegram_bot_token
@@ -17,4 +21,4 @@ token_test=testing_telegram_bot_token
 # You can add multiple Imagga users to improve stability. Leave proxy, port, prx_user and prx_password blank if not needed
 imagga_users=[{"key":"Imagga public key","secret":"Imagga secretkey ","proxy":"proxy ip(leave blank if not needed)","port":"proxy port","prx_user":"prx_user","prx_password":"prx_password"},{"key":"","secret":"","proxy":"","port":"","prx_user":"","prx_password":""},{"key":"","secret":"","proxy":"","port":"","prx_user":"","prx_password":""}]
 [developers]
-developers=first
+developers=developer_id_1, developer_id_2

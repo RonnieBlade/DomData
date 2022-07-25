@@ -10,7 +10,11 @@ __pycache__/
 config.ini
 
 # Temp images
-*.jpg
+*item_[0-9]*.jpg
+*temp_pic_user*.jpg
+
+# Test scripts
+tests.py
 
 # C extensions
 *.so

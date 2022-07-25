@@ -2,9 +2,9 @@ coloredlogs==10.0
 mysql-connector==2.2.9
 mysql-connector-python==8.0.17
 PyInstaller==3.4
-pyowm==2.10.0
+pyowm
 pyTelegramBotAPI==3.6.6
-requests==2.7.0
+requests
 emoji==0.5.4
 Pillow==7.0.0
 pylev==1.3.0
