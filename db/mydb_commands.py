@@ -17,14 +17,14 @@ def connect():
 
     while not done:
         try:
-            logger.info('Connecting to MySQL database...')
+            logger.debug('Connecting to MySQL database...')
             conn = MySQLConnection(**db_config)
 
             if conn.is_connected():
-                logger.info('connection established.')
+                logger.debug('connection established.')
                 done = True
             else:
-                logger.info('connection failed. try again i 5 secs')
+                logger.warning('connection failed. try again i 5 secs')
                 time.sleep(wait_time)
 
         except Error as error:
@@ -34,10 +34,6 @@ def connect():
 
     return conn
 
-    # finally:
-    # conn.close()
-    # logger.info('Connection closed.')
-
 
 def close (conn):
     done = False
@@ -45,9 +41,9 @@ def close (conn):
         try:
             if conn.is_connected():
                 conn.close()
-                logger.info('Connection closed.')
+                logger.debug('Connection closed.')
             else:
-                logger.exception('Connection was already closed.')
+                logger.warning('Connection was already closed.')
 
             done = True
 

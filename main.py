@@ -329,16 +329,12 @@ def go_to_unhighlight(user, msg):
 
 
 def get_it_back(user, msg):
-    if user.item_in_hands is None:
-        send_msg_txt(user.id, t("nothing_in_my_hands", user))
-        previous_step(user, msg)
+    if not is_item_in_hands(user, msg):
         return
 
     location = find_item_by_id(user.item_in_hands.location, dom, user)
 
-    if location is None or user.step.location == 0:
-        send_msg_txt(user.id, t("cant_put", user))
-        previous_step(user, msg)
+    if is_trying_put_on_top(user, msg, location):
         return
 
     location.space.append(user.item_in_hands)
@@ -349,17 +345,30 @@ def get_it_back(user, msg):
     previous_step(user, msg)
 
 
-def put_it_here(user, msg):
+def is_item_in_hands(user, msg):
     if user.item_in_hands is None:
         send_msg_txt(user.id, t("nothing_in_my_hands", user))
         previous_step(user, msg)
+        return False
+    else:
+        return True
+
+
+def is_trying_put_on_top(user, msg, location):
+    if location is None or user.step.location == 0:
+        send_msg_txt(user.id, t("cant_put", user))
+        previous_step(user, msg)
+        return True
+
+
+def put_it_here(user, msg):
+
+    if not is_item_in_hands(user, msg):
         return
 
     location = find_item_by_id(user.step.location, dom, user)
 
-    if location is None or user.step.location == 0:
-        send_msg_txt(user.id, t("cant_put", user))
-        previous_step(user, msg)
+    if is_trying_put_on_top(user, msg, location):
         return
 
     good_place_to_land = location.can_i_put_it_here(user.item_in_hands)
@@ -609,8 +618,6 @@ def go_to_new_item_emoji(user, msg, update=False, search=False):
 
 
 def get_user_name(user_id):
-
-    # user_id 1 is 'DomData', things created automatically, user 'DomData' with id 1 should be added to the DB on init
 
     user = find_or_create_user(user_id, users, True)
     if user.name is not None:
@@ -1362,8 +1369,7 @@ def new_item(user, name, my_type, item_class, item_emoji=None, auto=False, demo_
 
     location = user.step.location
     parent = find_item_by_id(location, dom, user)
-    id_int = \
-        mydb.add_item(parent.dom_id, location, name, my_type, user.id, item_class, item_emoji, has_img, tags,
+    id_int = mydb.add_item(parent.dom_id, location, name, my_type, user.id, item_class, item_emoji, has_img, tags,
                       demo_role)[0]
     item = Item(id_int, name, location, my_type, datetime.datetime.now(), parent.dom_id, item_class, item_emoji,
                 user.id, has_img, tags, demo_role=demo_role)
@@ -1378,10 +1384,9 @@ def new_item(user, name, my_type, item_class, item_emoji=None, auto=False, demo_
 
     ibase.append(item)
 
-    current_dir = get_dir(parent.id, dom, user)
-    current_dir_txt = show_dir(current_dir, dom, user, False)
-
     if not auto:
+        current_dir = get_dir(parent.id, dom, user)
+        current_dir_txt = show_dir(current_dir, dom, user, False)
         user.step = Step("main_menu", parent.id)
         send_item_to_user(user, current_dir_txt, parent.type)
 
@@ -1422,13 +1427,12 @@ def step_share_access_add(user, msg, deleting=False):
 
     location = find_item_by_id(user.step.location, dom, user)
 
-    id_int = 0
-
     try:
         id_int = int(id_txt)
     except ValueError as err:
         logger.error(err)
         send_msg_txt(user.id, t('dont_understand', user), remove_keyboard=False)
+        go_to_share_access(user, msg)
         return
 
     if user.step.sharing_access_key is None:
@@ -1453,6 +1457,7 @@ def step_share_access_add(user, msg, deleting=False):
             send_msg_txt(id_int, f"{user.name} {t('shared_with_you', user)} \"{location.name}\" /DomData")
 
     # if the user has denied access to himself
+    # (probably we have to prevent this action if no other users have access to this house)
     if deleting and user_to_share.id == user.id:
         user.step.sharing_access_key = None
         previous_step(user, msg, True)
@@ -1735,18 +1740,13 @@ async def delete_item(user, msg, item, items):
 
     parent = find_item_by_id(item.location, dom, user)
     if parent is None:
-        parent = dom
         # it means we are on the top level, it has no list "space"
         dom.remove(item)
-
         ibase.remove_by_id(item.id)
-
         user.step.location = 0
     else:
         parent.space.remove(item)
-
         ibase.remove_by_id(item.id)
-
         user.step.location = parent.id
 
     previous_step(user, msg)
@@ -2049,7 +2049,6 @@ def work_on_msg(telegram_id, msg, users):
             step_add_img(user, msg)
         else:
             send_msg_txt(telegram_id, t("img_unexpected", user), remove_keyboard=False)
-            # previous_step(user, msg)
         return
 
         # Comparing only the first 64 characters, because the text in the button has length limit
@@ -2073,6 +2072,11 @@ def create_new_user(msg, users, id_instead_of_msg=False):
     if id_instead_of_msg:
         uid = msg
         name = "Unknown"
+
+        if uid == 1:
+            # Creating a service account to leave comments in demo houses
+            name = "DomData"
+
         lang = "en"
     else:
         uid = msg.chat.id
@@ -2115,6 +2119,9 @@ def create_new_user(msg, users, id_instead_of_msg=False):
 
 
 def find_or_create_user(msg, users, id_instead_of_msg=False):
+
+    # using id_instead_of_msg means we create user automatically
+
     user_non_flag = False
     first_start = False
 
@@ -2133,15 +2140,16 @@ def find_or_create_user(msg, users, id_instead_of_msg=False):
         if user.busy:
             return user
 
+        # if DomData service user
+        if user.id == 1:
+            return user
+
     if user_non_flag:
         if first_start:
 
-            if user.lang != 'ru':
-                go_to_change_lang(user, msg, first_start=True)
-            else:
-                go_to_about(user, msg, startup=True)
-                time.sleep(3)
-                go_to_offer_demo(user, msg)
+            go_to_about(user, msg, startup=True)
+            time.sleep(3)
+            go_to_offer_demo(user, msg)
             # A flag that indicates there is no need to go further,
             # but wait for a response from the user about the language
             return 'startup'
@@ -2180,12 +2188,6 @@ def show_dir(item, items, user, top):
         hands_txt = f"\n🤲 {item_emoji_txt}*{user.item_in_hands.name}*{item_class_txt} {t('in_my_hands', user)}\n\n"
 
     location = item.location
-    parent = find_item_by_id(location, items, user)
-    location_str = str(location)
-    if parent is not None:
-        location_str = location_str + f" {parent.name}"
-    if location == 0:
-        location_str = f"{t('my_doms_command', user)}"
     if top:
         dir_txt = f"{item.name}:"
     else:
