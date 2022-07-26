@@ -33,9 +33,9 @@ You can run your version of DomData locally or on a cloud platform.
 
 * Clone the repository
 * Copy **img** directory to your FTP server
-* Create MySQL database (tables autocreation is coming soon)
+* Create MySQL database (tables will be created automatically)
 * Register an <a href="https://imagga.com/auth/signup">Imagga account</a> and get your API key
 * Create a new Telegram bot with <a href="https://t.me/BotFather">BotFather</a>
-* Edit the configuration file. Rename **config.ini.example** to **config.ini** and replace example data to your credentials
+* Rename **config.ini.example** to **config.ini** and replace example data to your credentials
 * Install dependecies ```pip3 install -r requirements.txt``` 
 * Run the app locally or on a cloud platform. 
