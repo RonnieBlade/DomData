@@ -20,6 +20,7 @@ conf = read_config("config.ini", "imagga")
 
 stats = mydb.get_imagga_usage_list()
 
+
 class ImaggaUser:
     def __init__(self, key, secret, proxy=None, port=None, prx_user=None, prx_password=None):
 
