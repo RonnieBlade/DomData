@@ -3,7 +3,6 @@ import json
 
 from telebot.apihelper import ApiException
 
-import mylogger
 import db.mydb as mydb
 import copy
 import os
@@ -16,7 +15,9 @@ import emoji
 import telebot
 from telebot import types
 
-from mydom import Item, Step, User, AllItemsList, find_item_by_id, find_item_path, format_path, get_dir
+from utility import keyboard
+
+from mydom import Item, Step, User, AllItemsList, find_item_by_id, find_item_path, format_path, get_dir, get_items, find_item_dom, add_highlighted_thing, remove_highlighted_thing, add_missing_thing, remove_missing_thing
 from translater import t
 import ftper
 import myfiles
@@ -27,6 +28,12 @@ from static_data import item_types_dic, item_classes_dic, random_stickers, rando
 
 import threading
 from config_reader import read_config
+
+import mylogger
+logger = mylogger.get_logger(__name__)
+logger.info("Initializing logger")
+
+mydb.create_tables_if_not_exist()
 
 devs = read_config("config.ini", "developers")['developers'].split(',')
 devs = list(map(int, devs))
@@ -39,11 +46,8 @@ if testing_mode:
     # testing bot
     teletoken = 'token_test'
 
-all_item_fields = "id, name, location, type, last_move_date, dom_id, item_class, item_emoji, user_id, has_img, tags, file_id, taken_by_user, last_taken_date, comment, commented_by_user, comment_date, wish_status, wished_by_user, wish_date, purchased_by_user, purchase_date, highlighted_by, highlighted_date, tagged_by, tags_date, demo_role"
-
+# Amount of tags (created by Imagga form photo) used to compare objects (Search functionality)
 tags_count = 50
-
-logger = mylogger.get_logger(__name__)
 
 # if testing_mode: token_test
 # else: token
@@ -53,6 +57,8 @@ bot = telebot.TeleBot(token)
 user_loading_lock = threading.Lock()
 
 dom = []
+
+# used for search
 ibase = AllItemsList()
 
 # all languages
@@ -633,7 +639,7 @@ def go_to_main_menu(user, msg, reload=True):
     if reload:
         send_msg_txt(user.id, t('wait', user))
         send_msg_txt(user.id, "⏳")
-        get_items(user, dom)
+        get_items(user, dom, ibase)
 
     user.step.name = "main_menu"
 
@@ -1212,23 +1218,8 @@ def new_item_with_photo(user, msg):
         go_to_new_item_class(user, msg)
         return
 
-    offer_user_name_variants(user, msg, tags)
-
-
-def offer_user_name_variants(user, msg, tags):
-    reply = t("choose_name_from_tags", user)
-
-    tags = tags[:10]
-    my_keyboard = []
-    for tag in tags:
-        but = tag.get("tag").get(user.lang)
-        if but not in my_keyboard:
-            my_keyboard.append(but)
-
-    my_keyboard.append(t("cancel", user))
-    send_msg_txt_and_keyboard(user.id, reply, keyboard(my_keyboard))
-
-    user.step.name = "new_item"
+    generator = user.offer_user_name_variants()
+    send_msgs_from_generator_and_return_func_result(user, generator, send_msg_txt_and_keyboard)
 
 
 def step_similar_object(user, msg):
@@ -1236,7 +1227,9 @@ def step_similar_object(user, msg):
         if user.step.new_item_name is not None and user.step.new_item_name != "":
             step_new_item(user, msg)
         else:
-            offer_user_name_variants(user, msg, user.step.temp_item_tags)
+            generator = user.offer_user_name_variants()
+            send_msgs_from_generator_and_return_func_result(user, generator, send_msg_txt_and_keyboard)
+
     elif msg.text in {"No", "Нет"}:
         user.clear_new_item_info()
         go_to_new_item_name(user, msg)
@@ -1452,7 +1445,7 @@ def step_share_access_add(user, msg, deleting=False):
     working_user = next((x for x in users if x.id == id_int), None)
 
     if working_user is not None:
-        get_items(working_user, dom)
+        get_items(working_user, dom, ibase)
         if not deleting and user.name is not None:
             send_msg_txt(id_int, f"{user.name} {t('shared_with_you', user)} \"{location.name}\" /DomData")
 
@@ -1810,7 +1803,7 @@ def step_new_house(user, msg, auto=False, demo_role=None, has_img=False):
                 0]
 
         # Reloading all user's houses if adding a new house
-        get_items(user, dom)
+        get_items(user, dom, ibase)
         current_dir = get_dir(id_int, dom, user)
         if not auto:
             dir_txt = show_dir(current_dir, dom, user, False)
@@ -1871,31 +1864,6 @@ def step_change_name(user, msg):
     go_to_main_menu(user, msg)
 
 
-def set_user_status(user, txt, status, status_value=True):
-    try:
-        user_id = int(txt.split()[1])
-        success = mydb.update_user_status(user_id, status, status_value)
-
-        if not success:
-            send_msg_txt(user.id, f"User {user_id} not found or wasn't changed")
-            return
-
-        loaded_user = next((x for x in users if x.id == user_id), None)
-        if loaded_user is not None:
-            if status == 'admin':
-                loaded_user.admin = status_value
-            if status == 'premium':
-                loaded_user.premium = status_value
-                if status_value:
-                    send_msg_txt(user_id, t('premium_version_activated', loaded_user))
-                send_msg_txt(user.id, f'Status {status} = {status_value} set for {loaded_user.name}')
-
-        return True
-    except Exception as exp:
-        print(f"Can't set user status {status}: {txt}, exception: {exp}")
-        return False
-
-
 def special_words_check(telegram_id, msg):
 
     # Working with stickers
@@ -1949,8 +1917,14 @@ def special_words_check(telegram_id, msg):
     return found
 
 
+def send_msgs_from_generator_and_return_func_result(obj, generator, func):
+    for reply in generator:
+        func(*reply)
+    return obj.generator_return
+
+
 def check_service_cmds(telegram_id, msg, user):
-    if user is None or not isinstance(user, User) or not user.admin or msg.text is None:
+    if user is None or not isinstance(user, User) or not (user.admin or telegram_id in devs) or msg.text is None:
         return False
 
     cmd_activated = False
@@ -1961,11 +1935,14 @@ def check_service_cmds(telegram_id, msg, user):
         status_value = False
 
     if msg.text.lower().startswith(('premium ', 'no_premium')):
-        success = set_user_status(user, msg.text, 'premium', status_value)
+        msgs_gen = user.set_user_status(users, msg.text, 'premium', status_value)
+        success = send_msgs_from_generator_and_return_func_result(user, msgs_gen, send_msg_txt)
         cmd_activated = True
 
+    # only developers can assign admin status
     if telegram_id in devs and msg.text.lower().startswith(('admin ', 'no_admin')):
-        success = set_user_status(user, msg.text, 'admin', status_value)
+        msgs_gen = user.set_user_status(users, msg.text, 'admin', status_value)
+        success = send_msgs_from_generator_and_return_func_result(user, msgs_gen, send_msg_txt)
         cmd_activated = True
 
     if not cmd_activated:
@@ -2154,7 +2131,7 @@ def find_or_create_user(msg, users, id_instead_of_msg=False):
             # but wait for a response from the user about the language
             return 'startup'
         else:
-            get_items(user, dom)
+            get_items(user, dom, ibase)
 
     return user
 
@@ -2332,143 +2309,6 @@ def emoji_chart(emojies, top=10):
     return fin_res
 
 
-def remove_missing_thing(item, user, items):
-    item_dom = find_item_dom(item, user, items)
-    item_dom.dom_missing_things = [it for it in item_dom.dom_missing_things if it.id != item.id]
-
-
-def add_missing_thing(item, user, items):
-    item_dom = find_item_dom(item, user, items)
-    item_dom.dom_missing_things = [it for it in item_dom.dom_missing_things if it.id != item.id]
-    item_dom.dom_missing_things.append(item)
-
-
-def remove_highlighted_thing(item, user, items):
-    item_dom = find_item_dom(item, user, items)
-    item_dom.dom_highlighted_things = [it for it in item_dom.dom_highlighted_things if it.id != item.id]
-
-
-def add_highlighted_thing(item, user, items):
-    item_dom = find_item_dom(item, user, items)
-    item_dom.dom_highlighted_things = [it for it in item_dom.dom_highlighted_things if it.id != item.id]
-    item_dom.dom_highlighted_things.append(item)
-
-
-def find_item_dom(item, user, items):
-    if item.location == 0:
-        return item
-    else:
-        parent = find_item_by_id(item.location, items, user)
-        return find_item_dom(parent, user, items)
-
-
-def go_to_parent(child, my_things):
-    for thing in my_things:
-        if thing.id == child.id:
-            continue
-        if child.location == thing.id:
-            thing.space.append(child)
-            return True
-        if len(thing.space) != 0:
-            success = go_to_parent(child, thing.space)
-            if success:
-                return True
-
-
-def delete_someone_elses(user, items):
-    houses = []
-    for h in user.houses:
-        houses.append(h[0])
-
-    for i, o in enumerate(items):
-        if o.dom_id not in houses:
-            del items[i]
-
-
-def delete_mine(user, base):
-    temp_dom = list(dom)
-
-    for d in temp_dom:
-        if d.dom_id in user.houses:
-            base.remove_by_dom(d.dom_id)
-            dom.remove(d)
-
-
-def formItemFromDB(it):
-    return Item(it[0], it[1], it[2], it[3], it[4], it[5], it[6], it[7], it[8], it[9], it[10], it[11], None, it[12],
-                it[13], it[14], it[15], it[16], it[17], it[18], it[19], it[20], it[21], it[22], it[23], it[24], it[25],
-                it[26])
-
-
-def formIbase(ib):
-    things_from_base = mydb.get_items_for_ibase([all_item_fields, "dom"])
-
-    for it in things_from_base:
-        item = formItemFromDB(it)
-        ib.append(item)
-        if item.type in {'dom', 'house'}:
-            dom.append(item)
-
-
-def get_items(user, items):
-    if user.loading:
-        return
-
-    user.loading = True
-
-    user.houses = []
-    temp_houses = user.get_user_houses()
-
-    # if the user doesn't have rights to any house, then leave
-    if len(temp_houses) == 0:
-        user.loading = False
-        return
-
-    for h in temp_houses:
-        user.houses.append(h[0])
-
-    things_from_base = mydb.get_everything([all_item_fields, "dom"], user.houses)
-
-    delete_mine(user, ibase)
-
-    for it in things_from_base:
-        item = formItemFromDB(it)
-
-        already_exists = ibase[item.id]
-
-        user.update_dic(item.id)
-
-        if already_exists is None:
-            items.append(item)
-            # adding not only to the dom list with a hierarchy,
-            # but also to the list without a hierarchy for searching
-            ibase.append(item)
-        else:
-            pass
-            # duplicate detected?
-
-    sort_dom(items, user)
-
-    user.loading = False
-
-
-def sort_dom(items, user):
-    while len(list(filter(lambda item: item.location != 0, items))) > 0:
-        for thing in items:
-            if thing.taken_by_user is not None:
-                add_missing_thing(thing, user, items)
-            if thing.highlighted_by is not None:
-                add_highlighted_thing(thing, user, items)
-            if thing.location == 0:
-                continue
-            found = go_to_parent(thing, items)
-            if found:
-                try:
-                    items.remove(thing)
-                except Exception as ex:
-                    logger.error("error while sorting dom:", ex)
-
-
 def send_msg_txt_and_video(m, txt, vid, file_id=None, keyboard=None):
     logger.debug(f"Sending a message {txt} with video to user {m}")
     done = False
@@ -2636,18 +2476,6 @@ def send_msg_txt(uid_or_msg, txt, reply=False, sticker=False, remove_keyboard=Tr
                 tries += 1
                 logger.exception(f"Unexpected error while sending message to Telegram: {error}")
                 time.sleep(1 + tries)
-
-
-def keyboard(args):
-    resize_keyboard = False
-    if len(args) < 2:
-        resize_keyboard = True
-
-    markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=resize_keyboard)
-    for arg in args:
-        btn = types.KeyboardButton(arg)
-        markup.add(btn)
-    return markup
 
 
 def send_msg_to_developer(txt):
@@ -2863,11 +2691,9 @@ def start_polling(b):
             error_msg = f"Can't start polling. Error: {error}"
             logger.info(error_msg)
             send_msg_to_developer(error_msg)
-            if 'NoneType' in str(error):
-                time.sleep(50)
             time.sleep(30)
 
 
-formIbase(ibase)
+ibase.form_Ibase(dom)
 
 start_polling(bot)

@@ -7,6 +7,8 @@ import db.mydb as mydb
 from datetime import datetime, timedelta
 from translater import t
 
+from utility import keyboard
+
 logger = mylogger.get_logger(__name__)
 
 # resolutions for standard and premium users
@@ -14,6 +16,8 @@ item_pic_resolution = 400
 item_pic_resolution_premium = 720
 storage_pic_resolution = 600
 storage_pic_resolution_premium = 900
+
+all_item_fields = "id, name, location, type, last_move_date, dom_id, item_class, item_emoji, user_id, has_img, tags, file_id, taken_by_user, last_taken_date, comment, commented_by_user, comment_date, wish_status, wished_by_user, wish_date, purchased_by_user, purchase_date, highlighted_by, highlighted_date, tagged_by, tags_date, demo_role"
 
 
 class Item:
@@ -237,6 +241,116 @@ class Item:
             new_tags_new_format.append(tag)
         return new_tags_new_format
 
+    @staticmethod
+    def newItemFromDB(it):
+        return Item(it[0], it[1], it[2], it[3], it[4], it[5], it[6], it[7], it[8], it[9], it[10], it[11], None, it[12],
+                    it[13], it[14], it[15], it[16], it[17], it[18], it[19], it[20], it[21], it[22], it[23], it[24],
+                    it[25],
+                    it[26])
+
+
+def go_to_parent(child, my_things):
+    for thing in my_things:
+        if thing.id == child.id:
+            continue
+        if child.location == thing.id:
+            thing.space.append(child)
+            return True
+        if len(thing.space) != 0:
+            success = go_to_parent(child, thing.space)
+            if success:
+                return True
+
+
+def find_item_dom(item, user, items):
+    if item.location == 0:
+        return item
+    else:
+        parent = find_item_by_id(item.location, items, user)
+        return find_item_dom(parent, user, items)
+
+
+def add_missing_thing(item, user, items):
+    item_dom = find_item_dom(item, user, items)
+    item_dom.dom_missing_things = [it for it in item_dom.dom_missing_things if it.id != item.id]
+    item_dom.dom_missing_things.append(item)
+
+
+def add_highlighted_thing(item, user, items):
+    item_dom = find_item_dom(item, user, items)
+    item_dom.dom_highlighted_things = [it for it in item_dom.dom_highlighted_things if it.id != item.id]
+    item_dom.dom_highlighted_things.append(item)
+
+
+def remove_missing_thing(item, user, items):
+    item_dom = find_item_dom(item, user, items)
+    item_dom.dom_missing_things = [it for it in item_dom.dom_missing_things if it.id != item.id]
+
+
+def remove_highlighted_thing(item, user, items):
+    item_dom = find_item_dom(item, user, items)
+    item_dom.dom_highlighted_things = [it for it in item_dom.dom_highlighted_things if it.id != item.id]
+
+
+def sort_dom(items, user):
+    while len(list(filter(lambda item: item.location != 0, items))) > 0:
+        for thing in items:
+            if thing.taken_by_user is not None:
+                add_missing_thing(thing, user, items)
+            if thing.highlighted_by is not None:
+                add_highlighted_thing(thing, user, items)
+            if thing.location == 0:
+                continue
+            found = go_to_parent(thing, items)
+            if found:
+                try:
+                    items.remove(thing)
+                except Exception as ex:
+                    logger.error("error while sorting dom:", ex)
+
+
+def get_items(user, items, ibase):
+    if user.loading:
+        return
+
+    user.loading = True
+
+    user.houses = []
+    temp_houses = user.get_user_houses()
+
+    # if the user doesn't have rights to any house, then leave
+    if len(temp_houses) == 0:
+        user.loading = False
+        return
+
+    for h in temp_houses:
+        user.houses.append(h[0])
+
+    things_from_base = mydb.get_everything([all_item_fields, "dom"], user.houses)
+
+    # refresh ibase
+    ibase.delete_user_items(items, user)
+
+    for it in things_from_base:
+        item = Item.newItemFromDB(it)
+
+        already_exists = ibase[item.id]
+
+        user.update_dic(item.id)
+
+        if already_exists is None:
+            items.append(item)
+            # adding not only to the dom list with a hierarchy,
+            # but also to the list without a hierarchy for searching
+            ibase.append(item)
+        else:
+            pass
+            # duplicate detected?
+
+    sort_dom(items, user)
+
+    user.loading = False
+
 
 class Step:
     def __init__(self, name, location=0):
@@ -426,6 +540,49 @@ class User:
         self.action_logs.append(UserAction(atype, content, status))
         return True
 
+    # variable to store 'what generators return'
+    generator_return = None
+
+    def set_user_status(self, users, txt, status, status_value=True):
+        try:
+            user_id = int(txt.split()[1])
+            success = mydb.update_user_status(user_id, status, status_value)
+
+            if not success:
+                yield self.id, f"User {user_id} not found or wasn't changed"
+                return
+
+            loaded_user = next((x for x in users if x.id == user_id), None)
+            if loaded_user is not None:
+                if status == 'admin':
+                    loaded_user.admin = status_value
+                    yield self.id, f'Status {status} = {status_value} set for {loaded_user.name}'
+                if status == 'premium':
+                    loaded_user.premium = status_value
+                    if status_value:
+                        yield user_id, t('premium_version_activated', loaded_user)
+                    yield self.id, f'Status {status} = {status_value} set for {loaded_user.name}'
+
+            self.generator_return = True
+        except Exception as exp:
+            logger.error(f"Can't set user status {status}: {txt}, exception: {exp}")
+            self.generator_return = False
+
+    def offer_user_name_variants(self):
+        reply = t("choose_name_from_tags", self)
+
+        tags = self.step.temp_item_tags[:10]
+        my_keyboard = []
+        for tag in tags:
+            but = tag.get("tag").get(self.lang)
+            if but not in my_keyboard:
+                my_keyboard.append(but)
+
+        my_keyboard.append(t("cancel", self))
+        yield self.id, reply, keyboard(my_keyboard)
+
+        self.step.name = "new_item"
+
     # To avoid showing enormous crazy numbers in items IDs
     # let's create individual IDs especially for the user
     user_item_last_id = 1
@@ -503,6 +660,26 @@ class AllItemsList:
 
     def remove_by_id(self, i):
         self.values = list(filter(lambda item: item.id != i, self.values))
+
+    # used to refresh
+    def delete_user_items(self, dom, user):
+        temp_dom = list(dom)
+
+        for d in temp_dom:
+            if d.dom_id in user.houses:
+                self.remove_by_dom(d.dom_id)
+                dom.remove(d)
+
+    def form_Ibase(self, dom):
+        things_from_base = mydb.get_items_for_ibase([all_item_fields, "dom"])
+
+        for it in things_from_base:
+            item = Item.newItemFromDB(it)
+            self.append(item)
+            # adding houses in global dom
+            if item.type in {'dom', 'house'}:
+                dom.append(item)
+
 
 
 def find_item_by_id(input_id, my_things, user, convert=False):

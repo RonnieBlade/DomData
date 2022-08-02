@@ -284,10 +284,10 @@ def update_user_status(user_id, status, status_value):
     mydb_commands.close(db)
 
     if res == 0:
-        print(f"User {user_id} is not found in database")
+        logger.warning(f"User {user_id} is not found in database or wasn't changed")
         return False
 
-    print(f"Assigned a status {status} to user {user_id}")
+    logger.info(f"Assigned a status {status} to user {user_id}")
 
     return True
 
@@ -457,4 +457,4 @@ async def update_item(table, mykey, attribute, value, where):
     return f"Updated an item with {mykey} {where}, changed attribute {attribute} value to  {value} in table {table}", True
 
 
-create_tables_if_not_exist()
+#create_tables_if_not_exist()
