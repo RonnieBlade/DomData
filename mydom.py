@@ -473,21 +473,18 @@ class Cupboard(Item):
 
 
 class Room(Item):
-    new_item_keyboard_type = "new_item_type_in_cupboard_keyboard"
     highlightable = False
     use_tags = False
 
 
 class Level(Item):
     keyboard = "level_keyboard"
-    new_item_keyboard_type = "new_item_type_in_cupboard_keyboard"
     highlightable = False
     use_tags = False
 
 
 class House(Item):
     keyboard = "house_keyboard"
-    new_item_keyboard_type = "new_item_type_in_cupboard_keyboard"
     highlightable = False
     use_tags = False
 
