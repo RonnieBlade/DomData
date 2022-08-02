@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import random
 import re
 import time
@@ -191,3 +192,12 @@ def close_tags(txt):
     txt.replace(']', '')
 
     return txt
+
+
+def get_emoji_chart(emojis, top=10):
+    counter = collections.Counter(emojis)
+    res = counter.most_common(top)
+    fin_res = ""
+    for r in res:
+        fin_res += r[0]
+    return fin_res

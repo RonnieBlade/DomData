@@ -14,9 +14,11 @@ import emoji
 import telebot
 from telebot import types
 
-from utility import keyboard, special_words_check, filter_text, close_tags, create_demo_house
+from utility import keyboard, special_words_check, filter_text, close_tags, create_demo_house, get_emoji_chart
 
-from mydom import Item, Step, User, AllItemsList, find_item_by_id, find_item_path, get_dir, get_items, add_highlighted_thing, remove_highlighted_thing, add_missing_thing, remove_missing_thing, get_emoji_chart
+from mydom import Item, Step, User, AllItemsList, find_item_by_id, find_item_path, get_dir, get_items, \
+    add_highlighted_thing, remove_highlighted_thing, add_missing_thing, remove_missing_thing, Box, \
+    Storage, Cupboard, Room, Level, House
 from translater import t
 import ftper
 import myfiles
@@ -438,12 +440,7 @@ def go_to_delete_item(user, msg):
 def go_to_highlight(user, msg):
     location = find_item_by_id(user.step.location, dom, user)
 
-    if location is None or user.step.location == 0:
-        send_msg_txt(user.id, t("cant_highlight", user))
-        previous_step(user, msg)
-        return
-
-    if location.type not in {"item", "box", "storage", "cupboard"}:
+    if location is None or user.step.location == 0 or not location.highlightable:
         send_msg_txt(user.id, t("cant_highlight", user))
         previous_step(user, msg)
         return
@@ -511,19 +508,15 @@ def go_to_take_item(user, msg):
 def go_to_new_item_type(user, msg):
     user.step.name = "new_item_type"
 
-    keyboard_type = "new_item_type_keyboard"
-
     location = find_item_by_id(user.step.location, dom, user)
 
     if location is None:
         previous_step(user, msg)
         return
 
-    if location.type in {"cupboard", "storage"}:
-        keyboard_type = "new_item_type_in_cupboard_keyboard"
-    elif location.type == "box":
-        keyboard_type = "new_item_type_in_box_keyboard"
-    elif location.type == "item":
+    keyboard_type = location.new_item_keyboard_type
+
+    if location.type == "item":
         user.step.new_item_type = "item"
         go_to_new_item_name(user, msg)
         return
@@ -731,16 +724,11 @@ def send_item_to_user(user, reply, keyboard_type="item", similar_obj=False, simi
                     user.item_in_hands_put_but_text = but_txt
                     my_keyboard.append(but_txt)
 
-    if keyboard_type in {"box", "storage", "cupboard", "item"}:
+        my_keyboard.extend(t(location.keyboard, user))
+    else:
+        my_keyboard.extend(t("main_menu_keyboard", user))
 
-        if keyboard_type == "item":
-            my_keyboard.extend(t("item_keyboard", user))
-        if keyboard_type == "box":
-            my_keyboard.extend(t("box_keyboard", user))
-        if keyboard_type == "storage":
-            my_keyboard.extend(t("storage_keyboard", user))
-        if keyboard_type == "cupboard":
-            my_keyboard.extend(t("cupboard_keyboard", user))
+    if keyboard_type in {"box", "storage", "cupboard", "item"}:
 
         if keyboard_type == "item":
             take_but_order = 1
@@ -777,15 +765,12 @@ def send_item_to_user(user, reply, keyboard_type="item", similar_obj=False, simi
 
         send_msg_txt_and_keyboard(user.id, reply, keyboard(my_keyboard), img, location)
     elif keyboard_type == "top":
-        my_keyboard.extend(t("main_menu_keyboard", user))
 
         if len(user.houses) > 0:
             my_keyboard.insert(0, t('search', user))
 
         send_msg_txt_and_keyboard(user.id, reply, keyboard(my_keyboard))
     elif keyboard_type in {"dom", "house"}:
-
-        my_keyboard.extend(t("house_keyboard", user))
 
         if len(location.space) > 0:
             my_keyboard.insert(1, t('search', user))
@@ -807,8 +792,6 @@ def send_item_to_user(user, reply, keyboard_type="item", similar_obj=False, simi
         send_msg_txt_and_keyboard(user.id, reply, keyboard(my_keyboard), img, location)
     elif keyboard_type == "level":
 
-        my_keyboard.extend(t("level_keyboard", user))
-
         if location.has_img:
             my_keyboard.insert(-4, t('change_img', user))
             my_keyboard.insert(-3, t('delete_img', user))
@@ -825,8 +808,6 @@ def send_item_to_user(user, reply, keyboard_type="item", similar_obj=False, simi
 
         send_msg_txt_and_keyboard(user.id, reply, keyboard(my_keyboard), img, location)
     elif keyboard_type == "room":
-
-        my_keyboard.extend(t("room_keyboard", user))
 
         if location.has_img:
             my_keyboard.insert(-4, t('change_img', user))
@@ -1065,8 +1046,7 @@ def save_photo_and_get_tags(user, msg, new_item=False, search=False, resolution=
 
     location = find_item_by_id(user.step.location, dom, user)
 
-    if location is not None and location.item_class not in {"house", "dom", "level", "room", 'cupboard', 'storage',
-                                                            'box'} or (
+    if location is not None and location.use_tags or (
             new_item and user.step.new_item_type == "item") or search:
         user.new_action('imagga', status='complete')
         tags = imagga_API.get_image_tags(user, os.path.join(myfiles.temp_img_dir, f'{temp_pic_name}.jpg'))
@@ -1275,8 +1255,25 @@ def new_item(user, name, my_type, item_class, item_emoji=None, auto=False, demo_
     parent = find_item_by_id(location, dom, user)
     id_int = mydb.add_item(parent.dom_id, location, name, my_type, user.id, item_class, item_emoji, has_img, tags,
                       demo_role)[0]
-    item = Item(id_int, name, location, my_type, datetime.datetime.now(), parent.dom_id, item_class, item_emoji,
-                user.id, has_img, tags, demo_role=demo_role)
+
+    args = (id_int, name, location, my_type, datetime.datetime.now(), parent.dom_id, item_class, item_emoji,
+                    user.id, has_img, tags)
+
+    if my_type == 'box':
+        item = Box(*args, demo_role=demo_role)
+    elif my_type == 'storage':
+        item = Storage(*args, demo_role=demo_role)
+    elif my_type == 'cupboard':
+        item = Cupboard(*args, demo_role=demo_role)
+    elif my_type == 'room':
+        item = Room(*args, demo_role=demo_role)
+    elif my_type == 'level':
+        item = Level(*args, demo_role=demo_role)
+    elif my_type in {'house', 'dom'}:
+        item = House(*args, demo_role=demo_role)
+    else:
+        item = Item(*args, demo_role=demo_role)
+
     parent.space.append(item)
 
     user.update_dic(id_int)

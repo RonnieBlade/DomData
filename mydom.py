@@ -1,5 +1,4 @@
 import asyncio
-import collections
 import json
 import emoji
 import randtext as rt
@@ -8,7 +7,7 @@ import db.mydb as mydb
 from datetime import datetime, timedelta
 from translater import t
 
-from utility import keyboard
+from utility import keyboard, get_emoji_chart
 
 logger = mylogger.get_logger(__name__)
 
@@ -63,6 +62,7 @@ class Item:
         self.tags_date = tags_date
 
         self.tags = None
+
         if tags is not None:
             if type(tags) == str:
                 self.tags = json.loads(tags)
@@ -424,11 +424,72 @@ class Item:
         return new_tags_new_format
 
     @staticmethod
-    def newItemFromDB(it):
-        return Item(it[0], it[1], it[2], it[3], it[4], it[5], it[6], it[7], it[8], it[9], it[10], it[11], None, it[12],
+    def new_Item_from_db(it):
+
+        args = (it[0], it[1], it[2], it[3], it[4], it[5], it[6], it[7], it[8], it[9], it[10], it[11], None, it[12],
                     it[13], it[14], it[15], it[16], it[17], it[18], it[19], it[20], it[21], it[22], it[23], it[24],
                     it[25],
                     it[26])
+
+        type = it[3]
+
+        if type == 'box':
+            return Box(*args)
+        if type == 'storage':
+            return Storage(*args)
+        if type == 'cupboard':
+            return Cupboard(*args)
+        if type == 'room':
+            return Room(*args)
+        if type == 'level':
+            return Level(*args)
+        if type in {'house', 'dom'}:
+            return House(*args)
+        else:
+            return Item(*args)
+
+    keyboard = "item_keyboard"
+    new_item_keyboard_type = "new_item_type_keyboard"
+    highlightable = True
+    use_tags = True
+
+
+class Box(Item):
+    keyboard = "box_keyboard"
+    new_item_keyboard_type = "new_item_type_in_box_keyboard"
+    use_tags = False
+
+
+class Storage(Item):
+    keyboard = "storage_keyboard"
+    new_item_keyboard_type = "new_item_type_in_cupboard_keyboard"
+    use_tags = False
+
+
+class Cupboard(Item):
+    keyboard = "cupboard_keyboard"
+    new_item_keyboard_type = "new_item_type_in_cupboard_keyboard"
+    use_tags = False
+
+
+class Room(Item):
+    new_item_keyboard_type = "new_item_type_in_cupboard_keyboard"
+    highlightable = False
+    use_tags = False
+
+
+class Level(Item):
+    keyboard = "level_keyboard"
+    new_item_keyboard_type = "new_item_type_in_cupboard_keyboard"
+    highlightable = False
+    use_tags = False
+
+
+class House(Item):
+    keyboard = "house_keyboard"
+    new_item_keyboard_type = "new_item_type_in_cupboard_keyboard"
+    highlightable = False
+    use_tags = False
 
 
 def go_to_parent(child, my_things):
@@ -514,7 +575,7 @@ def get_items(user, items, ibase):
     ibase.delete_user_items(items, user)
 
     for it in things_from_base:
-        item = Item.newItemFromDB(it)
+        item = Item.new_Item_from_db(it)
 
         already_exists = ibase[item.id]
 
@@ -532,15 +593,6 @@ def get_items(user, items, ibase):
     sort_dom(items, user)
 
     user.loading = False
-
-
-def get_emoji_chart(emojis, top=10):
-    counter = collections.Counter(emojis)
-    res = counter.most_common(top)
-    fin_res = ""
-    for r in res:
-        fin_res += r[0]
-    return fin_res
 
 
 class Step:
@@ -865,12 +917,11 @@ class AllItemsList:
         things_from_base = mydb.get_items_for_ibase([all_item_fields, "dom"])
 
         for it in things_from_base:
-            item = Item.newItemFromDB(it)
+            item = Item.new_Item_from_db(it)
             self.append(item)
             # adding houses in global dom
             if item.type in {'dom', 'house'}:
                 dom.append(item)
-
 
 
 def find_item_by_id(input_id, my_things, user, convert=False):
@@ -948,10 +999,7 @@ def format_path(path):
     content = path.split(':\n')
 
     lines = content[len(content) - 1].split('\n')
-    nlines = len(lines)
     max_tabs = 5
-
-    levels = nlines - 1
 
     tab_c = 1
     this_iter = 0
@@ -984,7 +1032,6 @@ def get_dir(id, items, user, by_user=False):
     item = find_item_by_id(id, items, user, by_user)
 
     if id == 0:
-        top = True
         filtered_items = list(items)
         filtered_items = list(filter(lambda item: item.dom_id in user.houses, filtered_items))
         for fi in filtered_items:
@@ -993,7 +1040,6 @@ def get_dir(id, items, user, by_user=False):
                     filtered_items)
         return item
 
-    top = False
     if item is None:
         return None
         # return None instead of the top level if not found, so that we first display a message "Not found"
