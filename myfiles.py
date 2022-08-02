@@ -1,21 +1,21 @@
 import os
 import time
-
-from mydom import *
+import emoji
 
 import mylogger
 import io
 from PIL import Image
 import requests
-
-temp_img_dir = 'temp_img'
+from datetime import datetime
+from config_reader import read_config
 
 logger = mylogger.get_logger(__name__)
 
-from config_reader import read_config
+
 
 full_url_to_img_storage = read_config("config.ini", "ftp")['full_url']
 temp_img_dir = read_config("config.ini", "files")['temp_img_dir']
+
 
 def open_categories(path, add_text_at_start_and_end='', to_lower=True):
     emoji_dic = dict()
@@ -45,9 +45,9 @@ def open_categories_file(path, add_text_at_start_and_end, to_lower=True):
         yield {emoji_key: values}
 
 
-def resize_img(imgage, min_size):
+def resize_img(image, min_size):
 
-    img = Image.open(io.BytesIO(imgage))
+    img = Image.open(io.BytesIO(image))
 
     horizontal = True
     if img.size[1] > img.size[0]:
@@ -102,7 +102,7 @@ def save_pic(message, instname, bot, resize=False, new_size=None):
             done = True
             return True
         except Exception as error:
-            logger.exception('An error occurred while saving file Error: ')
+            logger.exception('An error occurred while saving file Error:', error)
             tries += 1
             time.sleep(5)
     return False
@@ -128,16 +128,11 @@ def delete_file(path):
         return False
 
 
-def save_request_to_file(user, txt, file_path):
-    if isinstance(user, User) and user.name is not None:
-        user_str = f"{user.name} ({user.id})"
-    else:
-        user_str = f"User {user}"
-
+def save_request_to_file(user_name, txt, file_path):
     if len(file_path) > 1:
         if not os.path.isdir(file_path[0]):
             os.mkdir(file_path[0])
 
     with open(os.path.join(*file_path), "a", encoding="utf-8") as f:
         now = datetime.now().strftime("%Y.%m.%d, %H:%M:%S")
-        f.write(f"{now} {user_str}:\n{txt}\n\n")
+        f.write(f"{now} User {user_name}:\n{txt}\n\n")

@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import json
 import emoji
 import randtext as rt
@@ -230,6 +231,187 @@ class Item:
 
         return reply
 
+    # variable to store 'what generators return'
+    generator_return = None
+
+    async def delete(self, user, dom, ibase, send_msg_txt_func):
+
+        # item will be removed from DB after synchronous code finishes executing
+        asyncio.create_task(mydb.delete_item(self.id))
+
+        if self.type in {"house", "dom"}:
+            mydb.delete_dom_and_key(self.dom_id)
+
+        item_class_str = ""
+        if self.item_class is not None and self.item_class != '':
+            item_class_str = f" ({t(self.item_class, user).lower()})"
+
+        send_msg_txt_func(user.id, f"{t('object', user)} \"{self.name}\"{item_class_str} {t('deleted', user)}")
+
+        parent = find_item_by_id(self.location, dom, user)
+        if parent is None:
+            # it means we are on the top level, it has no list "space"
+            dom.remove(self)
+            ibase.remove_by_id(self.id)
+            user.step.location = 0
+        else:
+            parent.space.remove(self)
+            ibase.remove_by_id(self.id)
+            user.step.location = parent.id
+
+    # returns a string displaying the object, the path to it, its contents, etc.,
+    def show_dir(self, items, user, get_user_name_func, top):
+        dir_txt = ""
+        hands_txt = ""
+
+        full_path = find_item_path(user, self, items, first_turn=True)
+
+        full_path = format_path(full_path)
+
+        if user.item_in_hands is not None:
+            item_emoji_txt = ""
+            item_class_txt = ""
+            if user.item_in_hands.item_emoji is not None:
+                item_emoji_txt = user.item_in_hands.item_emoji + " "
+            if user.item_in_hands.item_class is not None:
+                item_class_txt = f" ({t(user.item_in_hands.item_class, user).lower()})"
+            hands_txt = f"\n🤲 {item_emoji_txt}*{user.item_in_hands.name}*{item_class_txt} {t('in_my_hands', user)}\n\n"
+
+        location = self.location
+        if top:
+            dir_txt = f"{self.name}:"
+        else:
+            item_emoji = ""
+            two_dots = f":\n                _{t('empty', user)}_"
+            if len(self.space) > 0:
+                two_dots = ":"
+            if self.item_emoji is not None:
+                item_emoji = self.item_emoji + " "
+                if len(self.space) == 0:
+                    item_emoji = "      " + self.item_emoji
+            item_id_line_only_if_not_empty = f"/{user.id_conv(self.id)} "
+            item_class_str = ""
+            if self.item_class is not None and self.item_class != '':
+                item_class_str = f" ({t(self.item_class, user).lower()})"
+            taken_by_line = ""
+            if self.taken_by_user is not None:
+                uname = get_user_name_func(self.taken_by_user)
+                date_line = ""
+                if self.last_taken_date is not None:
+                    date_line = f" ({self.last_taken_date.strftime(t('date_format', user))})"
+                taken_by_line = f"❗️_{t('taken_by_user', user)} - {uname}_\n{date_line}"
+
+            highlighted_by_line = ""
+            if self.highlighted_by is not None:
+                uname = get_user_name_func(self.highlighted_by)
+                date_line = ""
+                if self.highlighted_date is not None:
+                    date_line = f" ({self.highlighted_date.strftime(t('date_format', user))})"
+                highlighted_by_line = f"☝️_{t('highlighted_by_user', user)} - {uname}{date_line}_\n"
+
+            dir_txt = dir_txt + f"{hands_txt}{full_path}\n\n_{t('youre_in', user)}_ ⬇\n➡ {item_emoji}{item_id_line_only_if_not_empty}*{self.name}*{item_class_str}{two_dots}\n{taken_by_line}{highlighted_by_line}"
+        if self is not None:
+
+            self.space = sorted(self.space, key=lambda r: r.date, reverse=False)
+
+            for it in self.space:
+                user.update_dic(it.id)
+                inside_str = ""
+                item_emoji = "      "
+
+                has_img = ""
+                if it.has_img and it.item_class not in {'house', 'dom', 'level', 'room', 'cupboard', 'storage', 'box'}:
+                    has_img = " 📷"
+
+                it_class_str = ""
+                if it.item_class is not None and it.item_class != '' and it.item_emoji is None and len(it.space) == 0:
+                    it_class_str = f" ({t(it.item_class, user).lower()})"
+
+                if it.item_emoji is not None:
+                    item_emoji = it.item_emoji + " "
+                if len(it.space) > 0:
+                    items_count_and_emoji_inside = it.count_items_inside(True)
+                    emoji_top = ""
+                    if items_count_and_emoji_inside[0] != 0:
+                        if len(items_count_and_emoji_inside[1]) != 0 and it.type not in {'dom', 'house', 'level'}:
+                            emoji_top = f"{get_emoji_chart(items_count_and_emoji_inside[1], 8)}"
+                            inside_str = f" ({items_count_and_emoji_inside[0]} {emoji_top})"
+                        else:
+                            inside_str = f" ({items_count_and_emoji_inside[0]} _{t('items_inside', user)}_)"
+
+                # If the item was taken away, don't show the id of the items inside,
+                # to prevent entering them
+                show_or_hide_id = f"/{user.id_conv(it.id)}"
+                if self.taken_by_user is not None:
+                    show_or_hide_id = ""
+
+                # If the item was taken away, mark it with an exclamation point
+                it_taken = ""
+                if it.taken_by_user is not None:
+                    it_taken = "❗️"
+
+                it_highlighted = ""
+                if it.highlighted_by is not None:
+                    it_highlighted = "☝️"
+
+                dir_txt += f"\n         {item_emoji}{show_or_hide_id} – {it_taken}{it_highlighted}{it.name}{it_class_str}{it_highlighted}{it_taken}{has_img}{inside_str}"
+
+            comments_line = ""
+            if self.comment is not None:
+                if self.commented_by_user is not None:
+                    uname = get_user_name_func(self.commented_by_user)
+                else:
+                    uname = ""
+                comments_line = f"\n\n✍️️*{t('commented_by_user', user)}:*\n{self.comment}\n_{uname} ({self.comment_date.strftime(t('date_format', user))}_)"
+
+            missing_things_line = ""
+            if location == 0 and len(self.dom_missing_things) != 0:
+                missing_things_line = f"\n\n❗️*{t('missing_things', user)}:*"
+                for mis in self.dom_missing_things:
+                    ie = "       "
+                    if mis.item_emoji is not None:
+                        ie = mis.item_emoji + " "
+                    missing_things_line += f"\n/{user.id_conv(mis.id)} {ie}_{mis.name}_"
+
+            highlighted_things_line = ""
+            if location == 0 and len(self.dom_highlighted_things) != 0:
+                highlighted_things_line = f"\n\n☝️*{t('highlighted_things', user)}:*"
+                for hi in self.dom_highlighted_things:
+                    ic = ""
+                    if hi.comment is not None:
+                        com = hi.comment
+                        if len(com) > 32:
+                            com = f"{com[:32]}..."
+                        ic = f" (_{com}_)"
+                    ie = "       "
+                    if hi.item_emoji is not None:
+                        ie = hi.item_emoji + " "
+                    highlighted_things_line += f"\n/{user.id_conv(hi.id)} {ie}{hi.name}{ic}"
+
+            dir_txt += comments_line + missing_things_line + highlighted_things_line
+
+            if user.last_put_item_location is not None and user.item_in_hands is not None:
+                b_e = ""
+                if user.last_put_item_location.item_emoji is not None:
+                    b_e = user.last_put_item_location.item_emoji + " "
+
+                if user.last_put_item_location.id != self.id:
+                    dir_txt += f"\n\n{t('go_back_to', user)}  {b_e}/{user.id_conv(user.last_put_item_location.id)} {user.last_put_item_location.name}"
+                user.last_put_item_location = None
+
+            if user.last_take_item_location is not None and user.item_in_hands is None:
+                b_e = ""
+                if user.last_take_item_location.item_emoji is not None:
+                    b_e = user.last_take_item_location.item_emoji + " "
+
+                if user.last_take_item_location.id != self.id:
+                    dir_txt += f"\n\n{t('go_back_to', user)} {b_e}/{user.id_conv(user.last_take_item_location.id)} {user.last_take_item_location.name} "
+                user.last_take_item_location = None
+
+            return dir_txt
+        else:
+            return "Not found"
+
     @staticmethod
     def tags_prepare(tags, count):
         if tags is None:
@@ -350,6 +532,15 @@ def get_items(user, items, ibase):
     sort_dom(items, user)
 
     user.loading = False
+
+
+def get_emoji_chart(emojis, top=10):
+    counter = collections.Counter(emojis)
+    res = counter.most_common(top)
+    fin_res = ""
+    for r in res:
+        fin_res += r[0]
+    return fin_res
 
 
 class Step:
